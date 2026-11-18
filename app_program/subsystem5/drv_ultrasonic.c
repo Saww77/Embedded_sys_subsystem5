@@ -21,6 +21,7 @@
 #define STARTUP_POLLS 32768u
 #define TRIGGER_POLLS 4096u
 #define CAPTURE_POLLS 8u
+#define SERVO_OFFSET_US(angle) (((angle) * 1000u + 90u) / 180u)
 
 static bool pwm_ready, echo_ready, seen_echo;
 
@@ -32,6 +33,9 @@ static bool echo_high(void)
 _Static_assert((ECHO_PIN & 1u) != 0, "Echo capture requires PWM channel B");
 _Static_assert(PWM_SLICE(ECHO_PIN) != PWM_SLICE(S5_SERVO_PIN),
                "Echo capture and servo require separate PWM slices");
+_Static_assert(S5_SERVO_CENTRE_US + SERVO_OFFSET_US(S5_MIN_ANGLE) >= 1500u &&
+               S5_SERVO_CENTRE_US + SERVO_OFFSET_US(S5_MAX_ANGLE) <= 2500u,
+               "Keep the calibrated scan within the 1000..2000 us pulse range");
 
 bool s5_hw_init(void)
 {
@@ -78,8 +82,9 @@ bool s5_hw_init(void)
 
 void s5_hw_angle(unsigned angle)
 {
-    /* Conservative 1–2 ms travel over 0–180 degrees. Calibrate on the vehicle. */
-    if (pwm_ready) pwm_set_cc(S5_SERVO_PIN, 1000u + (angle * 1000u + 90u) / 180u);
+    /* Apply the calibrated straight-ahead pulse to every scan angle. */
+    if (pwm_ready)
+        pwm_set_cc(S5_SERVO_PIN, S5_SERVO_CENTRE_US + SERVO_OFFSET_US(angle) - 500u);
 }
 
 S5_PING s5_hw_ping(void)

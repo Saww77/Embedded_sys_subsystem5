@@ -8,7 +8,7 @@
 #define COARSE_INDEX_STEP 6u
 #define SERVO_SETTLE_MS 120
 #define SERVO_SWEEP_SETTLE_MS 240
-#define SERVO_TEST_MS 350
+#define SERVO_HOME_SETTLE_MS 350
 #define OPEN_RECHECK_DELAY_MS 40
 #define PING_INTERVAL_MS 60
 #define RANGE_LOG_INTERVAL_MS 2000u
@@ -109,6 +109,12 @@ static void setup(void)
 {
     if (!s5_hw_init())
         tm_printf((UB*)"[S5] PWM or ultrasonic timer failed to start\n");
+    else
+        tm_printf((UB*)"[S5] GP%u centred: %u us. Waiting for sensor to settle.\n",
+                  S5_SERVO_PIN, S5_SERVO_CENTRE_US);
+    /* The driver holds centre as soon as PWM is enabled. Let the sensor settle
+       there before accepting the first range on either firmware profile. */
+    tk_dly_tsk(SERVO_HOME_SETTLE_MS);
 }
 
 static void scan_task(INT stacd, void *exinf)
@@ -118,14 +124,6 @@ static void scan_task(INT stacd, void *exinf)
     setup();
     tm_printf((UB*)"[S5] GP16 trigger, GP17 echo. Entry=%u mm, clear=%u mm\n",
               S5_STOP_MM, S5_CLEAR_MM);
-    /* The controller stays interlocked until the first accepted sonar sample. */
-    tm_printf((UB*)"[S5] GP%u servo check: 60, 120, 90 degrees\n", (unsigned)S5_SERVO_PIN);
-    s5_hw_angle(60u);
-    tk_dly_tsk(SERVO_TEST_MS);
-    s5_hw_angle(120u);
-    tk_dly_tsk(SERVO_TEST_MS);
-    s5_hw_angle(S5_CENTRE_ANGLE);
-    tk_dly_tsk(SERVO_TEST_MS);
 
     BOOL has_profile = FALSE;
     for (;;) {

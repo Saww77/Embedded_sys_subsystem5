@@ -83,7 +83,7 @@ Replace both the dashboard and Pico firmware with matching current versions. A h
 
 The **Obstacle scan** card shows measured forward distance even when a target is outside the stopping threshold. A measured forward range beyond 20 cm clears the obstacle interlock. Two no-target pings can also clear it once the sensor has produced a complete ECHO pulse. If the module emits no pulse on an open track at startup, hold a flat target 30–50 cm straight ahead while the car is stopped to verify the sensor. If the fault stays on, check sensor power, common ground, GP16 trigger, and the 3.3 V ECHO signal at GP17. Use a divider for a 5 V ECHO output. If the panel shows **Stale**, check the Pico’s Wi-Fi and broker connection first.
 
-Connect the scan servo to the Robo Pico servo header marked **GP12**. The normal firmware commands a short sweep during startup. To test detection followed by a single width sweep over USB, use the [stationary bench build](../testing/subsystem5/TEST_LOG.md#stationary-hardware-check).
+Connect the scan servo to the Robo Pico servo header marked **GP12**. At power-up the firmware holds the servo at its centre pulse and waits 350 ms before ranging. Check that the sensor faces straight ahead at that position. If it points to one side, mark the powered centre position, switch off, and re-seat the servo horn or adjust the sensor bracket. Small corrections can be made with `S5_SERVO_CENTRE_US` in `app_program/subsystem5/subsystem5.h`. To test detection followed by a single width sweep over USB, use the [stationary bench build](../testing/subsystem5/TEST_LOG.md#stationary-hardware-check).
 
 ## Trace obstacle width from the Pico to the dashboard
 
