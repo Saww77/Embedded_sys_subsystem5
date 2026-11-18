@@ -42,6 +42,23 @@ EXPORT void subsystem5_test(void)
     profile = s5_profile(samples, 0, S5_SCAN_POINTS - 1, 12);
     TEST_CHECK("S5-U06", !profile.left_edge_valid && !profile.right_edge_valid,
                "identical near readings at every angle give no confirmed exit side");
+    bool seen_echo = false;
+    S5_PING quiet = s5_classify_echo(S5_ECHO_QUIET, 0, &seen_echo);
+    TEST_CHECK("S5-U07", quiet.range_mm == S5_UNKNOWN_RANGE && !seen_echo &&
+               s5_classify_echo(S5_ECHO_PULSE, 2, &seen_echo).range_mm == S5_UNKNOWN_RANGE &&
+               s5_classify_echo(S5_ECHO_QUIET, 0, &seen_echo).range_mm == S5_UNKNOWN_RANGE,
+               "silence and implausibly short pulses cannot qualify as open on startup");
+    S5_PING target = s5_classify_echo(S5_ECHO_PULSE, 2300, &seen_echo);
+    quiet = s5_classify_echo(S5_ECHO_QUIET, 0, &seen_echo);
+    TEST_CHECK("S5-U08", target.range_mm == 394 && target.pulse_us == 2300 &&
+               seen_echo && quiet.range_mm == S5_OPEN_RANGE &&
+               s5_classify_echo(S5_ECHO_HIGH, 0, &seen_echo).range_mm == S5_UNKNOWN_RANGE &&
+               s5_classify_echo(S5_ECHO_TIMING, 0, &seen_echo).range_mm == S5_UNKNOWN_RANGE,
+               "a valid pulse qualifies an idle-low timeout but never a stuck-high or timing fault");
+    seen_echo = false;
+    S5_PING long_pulse = s5_classify_echo(S5_ECHO_PULSE, 38000, &seen_echo);
+    TEST_CHECK("S5-U09", seen_echo && long_pulse.range_mm == S5_OPEN_RANGE,
+               "a complete out-of-range pulse qualifies the sensor on an open track");
     TEST_SUMMARY("subsystem5");
 }
 #endif

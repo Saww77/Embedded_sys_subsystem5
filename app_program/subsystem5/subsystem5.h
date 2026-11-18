@@ -7,4 +7,8 @@
 
 #define S5_SERVO_PIN 12u
 
+#if APP_S5_BENCH
+EXPORT void subsystem5_bench(void);
+#endif
+
 #endif

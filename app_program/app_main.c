@@ -22,7 +22,7 @@
  *	  subsystem2/  Producer  makes a "sample" every 300 ms     (core 1)
  *	  subsystem3/  Consumer  collects samples into statistics  (core 0)
  *	  subsystem4/  Monitor   prints reports, pauses/resumes the LED
- *	  subsystem5/  (empty template for the fifth student)
+ *	  subsystem5/  Ultrasonic ranging and servo scanning
  *
  *	How they talk to each other (the interfaces, see TEAM.md section 5):
  *	  IF-01  S2 -> S3  mailbox mbx_samples      (owned by S3)
@@ -55,6 +55,10 @@
 
 #include "app.h"
 #include "vehicle_controller/vehicle_controller.h"
+#if APP_S5_BENCH
+#include "subsystem2/motion_hw.h"
+#include "subsystem5/subsystem5.h"
+#endif
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -89,7 +93,11 @@ EXPORT ID app_start_task(FP entry, PRI pri, UW prc, const char *name)
 
 	/* tk_sta_tsk: DORMANT -> READY.  The int is passed as stacd. */
 	er = tk_sta_tsk(tid, 0);
-	CHECK(er, name);
+	if (er < E_OK) {
+		CHECK(er, name);
+		(void)tk_del_tsk(tid);
+		return er;
+	}
 	return tid;
 }
 
@@ -108,6 +116,10 @@ EXPORT INT usermain(void)
 	tm_printf((UB*)"single-core build\n");
 #endif
 
+#if APP_S5_BENCH
+	s2_hw_safe_outputs();
+	subsystem5_bench();
+#else
 	/* Phase 1: every subsystem creates its kernel objects */
 	CHECK(subsystem1_init(), "subsystem1_init");
 	CHECK(subsystem2_init(), "subsystem2_init");
@@ -144,5 +156,6 @@ EXPORT INT usermain(void)
 
 	/* Sleep forever.  Returning from usermain() would shut down. */
 	tk_slp_tsk(TMO_FEVR);
+#endif
 	return 0;
 }

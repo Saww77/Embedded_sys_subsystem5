@@ -62,8 +62,8 @@ void s1_publish_telemetry(void)
     }
     if(s.terrain_valid && (uint32_t)(s.timestamp_ms-s.terrain_timestamp_ms)<=VC_SENSOR_MAX_AGE_MS)
         account(s1_publish_terrain(s.height_mm,s.terrain_phase));
-    /* A full coarse/fine scan can take up to three seconds. */
-    if(s.obstacle_valid && (uint32_t)(s.timestamp_ms-s.obstacle_timestamp_ms)<=4000u)
+    unsigned obstacle_max_age = s.obstacle_profile ? 4000u : S5_RANGE_MAX_AGE_MS;
+    if(s.obstacle_valid && (uint32_t)(s.timestamp_ms-s.obstacle_timestamp_ms)<=obstacle_max_age)
         account(s1_publish_obstacle(s.near_mm,s.width_mm,s.clear_left_mm,
                                     s.clear_right_mm,s.obstacle_angle));
 #endif

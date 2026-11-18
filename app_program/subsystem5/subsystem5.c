@@ -26,11 +26,11 @@ static void aim(unsigned angle)
 static unsigned read_at(unsigned index)
 {
     aim(S5_MIN_ANGLE + index * S5_FINE_STEP);
-    unsigned range = s5_hw_measure_mm();
+    unsigned range = s5_hw_ping().range_mm;
     if (range == S5_OPEN_RANGE) {
         /* A long out-of-range pulse plus this delay spaces triggers by 60 ms. */
         tk_dly_tsk(OPEN_RECHECK_DELAY_MS);
-        range = s5_hw_measure_mm();
+        range = s5_hw_ping().range_mm;
     }
     return range;
 }
@@ -61,11 +61,17 @@ static BOOL scan_obstacle(void)
     return found;
 }
 
+static void setup(void)
+{
+    if (!s5_hw_init())
+        tm_printf((UB*)"[S5] PWM or ultrasonic timer failed to start\n");
+}
+
 static void scan_task(INT stacd, void *exinf)
 {
     (void)stacd;
     (void)exinf;
-    s5_hw_init();
+    setup();
     /* The controller stays interlocked until the first accepted sonar sample. */
     tm_printf((UB*)"[S5] GP%u servo check: 60, 120, 90 degrees\n", (unsigned)S5_SERVO_PIN);
     s5_hw_angle(60u);
@@ -77,7 +83,7 @@ static void scan_task(INT stacd, void *exinf)
 
     BOOL has_profile = FALSE;
     for (;;) {
-        unsigned range = s5_hw_measure_mm();
+        unsigned range = s5_hw_ping().range_mm;
         vehicle_submit_obstacle_range(range);
         if (s5_range_measured(range) && range <= S5_CLEAR_MM && vehicle_obstacle_scan_allowed()) {
             if (!has_profile) {
@@ -100,6 +106,32 @@ static void scan_task(INT stacd, void *exinf)
         }
     }
 }
+
+#if APP_S5_BENCH
+EXPORT void subsystem5_bench(void)
+{
+    static const unsigned angles[] = {90u, 60u, 90u, 120u};
+    static const char *const status[] = {"no pulse", "pulse", "stuck high", "timing fault"};
+    tm_printf((UB*)"[S5 BENCH] GP12 servo, GP16 trigger, GP17 echo. Drive outputs off.\n");
+    setup();
+    for (;;) {
+        for (unsigned i = 0; i < sizeof(angles) / sizeof(angles[0]); ++i) {
+            aim(angles[i]);
+            for (unsigned sample = 0; sample < 3; ++sample) {
+                S5_PING ping = s5_hw_ping();
+                if (s5_range_measured(ping.range_mm))
+                    tm_printf((UB*)"[S5 BENCH] servo=%u deg echo=%u us range=%u mm\n",
+                              angles[i], ping.pulse_us, ping.range_mm);
+                else
+                    tm_printf((UB*)"[S5 BENCH] servo=%u deg echo=%s pulse=%u us range=%s\n",
+                              angles[i], status[ping.state], ping.pulse_us,
+                              ping.range_mm == S5_OPEN_RANGE ? "open" : "unavailable");
+                tk_dly_tsk(350);
+            }
+        }
+    }
+}
+#endif
 #endif
 
 EXPORT ER subsystem5_init(void)

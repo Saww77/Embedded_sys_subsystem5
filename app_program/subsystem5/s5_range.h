@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #define S5_MAX_RANGE_MM 4000u
+#define S5_MIN_ECHO_US 100u
 #define S5_OPEN_RANGE 4094u
 #define S5_UNKNOWN_RANGE 4095u
 #define S5_STOP_MM 150u
@@ -23,6 +24,29 @@ static inline unsigned s5_range_from_echo(unsigned pulse_us)
 {
     unsigned mm = (pulse_us * 343u + 1000u) / 2000u;
     return pulse_us && s5_range_measured(mm) ? mm : S5_OPEN_RANGE;
+}
+
+typedef enum {
+    S5_ECHO_QUIET, S5_ECHO_PULSE, S5_ECHO_HIGH, S5_ECHO_TIMING
+} S5_ECHO_STATE;
+
+typedef struct {
+    unsigned pulse_us:16;
+    unsigned range_mm:12;
+    unsigned state:2;
+} S5_PING;
+
+static inline S5_PING s5_classify_echo(S5_ECHO_STATE state, unsigned pulse_us,
+                                       bool *seen_echo)
+{
+    unsigned range = S5_UNKNOWN_RANGE;
+    if (state == S5_ECHO_PULSE && pulse_us >= S5_MIN_ECHO_US) {
+        *seen_echo = true;
+        range = s5_range_from_echo(pulse_us);
+    } else if (state == S5_ECHO_QUIET && *seen_echo) {
+        range = S5_OPEN_RANGE;
+    }
+    return (S5_PING){.state = state, .pulse_us = pulse_us, .range_mm = range};
 }
 
 typedef struct {

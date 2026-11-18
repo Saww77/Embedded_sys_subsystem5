@@ -35,6 +35,14 @@ CONSOLE ?= usb_cdc
 # Pico W radio.  Defaults to cyw43: the radio is powered up and owned by a
 # core-0 polling service task, using the Pico SDK's cyw43 driver.  WIFI=none
 # leaves the radio powered down.
+S5_BENCH ?= 0
+ifneq ($(S5_BENCH),0)
+ifneq ($(S5_BENCH),1)
+$(error Unknown S5_BENCH '$(S5_BENCH)'; use 0 or 1)
+endif
+WIFI ?= none
+S5_BENCH_SUFFIX := _s5bench
+endif
 WIFI ?= cyw43
 ifneq ($(filter $(WIFI),none cyw43),$(WIFI))
 $(error Unknown WIFI '$(WIFI)'; use none or cyw43)
@@ -107,6 +115,11 @@ $(error BUDDY1_DEMO=1 requires SMP=1 for Buddy 2 encoder IRQ ownership)
 endif
 DEMO_SUFFIX := _b1demo
 endif
+ifeq ($(S5_BENCH),1)
+ifneq ($(WIFI)-$(NET)-$(MQTT)-$(BUDDY1_DEMO),none-none-0-0)
+$(error S5_BENCH=1 runs the stationary USB bench without Wi-Fi, MQTT or BUDDY1_DEMO)
+endif
+endif
 
 # CRASH_REPORT=1 also copies every console line to UART0 on GP0 (TX) /
 # GP1 (RX), 115200 8N1.  UART output is sent immediately, so it still shows
@@ -134,7 +147,7 @@ endif
 # only the banner in the log revealed it.
 #
 #EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(TEST_SUFFIX)
-EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(DEMO_SUFFIX)$(TEST_SUFFIX)
+EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(DEMO_SUFFIX)$(TEST_SUFFIX)$(S5_BENCH_SUFFIX)
 
 GCC := arm-none-eabi-gcc
 AS := arm-none-eabi-gcc
@@ -195,7 +208,7 @@ CFLAGS  += -DCNF_SMP=1
 ASFLAGS += -DCNF_SMP=1
 endif
 #CFLAGS  += -DAPP_TEST=$(TEST)
-CFLAGS  += -DAPP_TEST=$(TEST) -DAPP_BUDDY1_DEMO=$(BUDDY1_DEMO)
+CFLAGS  += -DAPP_TEST=$(TEST) -DAPP_BUDDY1_DEMO=$(BUDDY1_DEMO) -DAPP_S5_BENCH=$(S5_BENCH)
 CFLAGS  += -DTM_CONSOLE_UART=$(CRASH_REPORT)
 ifeq ($(CRASH_REPORT),0)
 CFLAGS  += -DBOARD_UART0_FREE=1
@@ -228,7 +241,7 @@ endif
 # before any recipe executes.
 ################################################################################
 #PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)
-PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)
+PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)-s5bench$(S5_BENCH)
 PROFILE_FILE := .build_profile
 
 ifneq ($(strip $(shell cat $(PROFILE_FILE) 2>/dev/null)),$(PROFILE_ID))

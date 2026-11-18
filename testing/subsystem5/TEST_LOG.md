@@ -8,11 +8,17 @@ During line following a valid forward return within 300 mm caps approach targets
 
 The controller chooses the side with the larger measured clearance among routes with space for the vehicle and the estimated obstacle edge. It turns out, drives the calculated offset, realigns parallel to the original line, and passes the obstacle using 36 RPM encoder-bounded segments. It checks each heading before moving. If the return corridor is blocked, it can pass farther in short increments up to 300 mm total along the track. Two distinct IR detections during the bounded inward search trigger a stop, sensor-to-axle centering move and pivot back to the track heading. After a valid clear reading on the final heading, it resumes line following.
 
-Two ordinary no-target pings count as open space for line following and detour clearance. The dashboard only displays measured distances. A stuck-high echo or overdue range sample still blocks motion. A signal held low can also look like an open track, so check range readings against a known target during bench validation.
+Two ordinary no-target pings count as open space for line following and detour clearance after the sensor has produced a complete ECHO pulse at least once since boot. A complete out-of-range pulse also proves that the sensor responded. Before that proof, an idle-low pin with no pulse remains blocked. A stuck-high echo or overdue range sample blocks motion. Check range readings against a known target during bench validation.
 
 STOP, stale inputs, motor faults, unconfirmed clearance, and a failed or timed-out line search end the detour stopped. An aborted detour requires fresh IR evidence and a new START. Calibrate the effective wheel track, servo direction and sensor-to-axle offset on the car before evaluating the track metrics.
 
 Encoder pulse inputs follow the updated report. Left uses GP2 and right uses GP3.
+
+## Stationary hardware check
+
+With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It sets the drive outputs low and repeats the GP12 sweep while printing raw readings over USB serial at 115200.
+
+Hold a flat target 30–50 cm ahead at the centre position. A working sensor reports about 1,750–2,920 µs and 300–500 mm. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 
@@ -57,6 +63,10 @@ The ELF counts cover static sections. The scan task also uses a kernel-allocated
 | S5-U06 | Reject a scan with close returns at every angle as evidence of side clearance | Passed on host |
 | S5-I06 | Complete either detour with a confirmed open side and no measured width | Passed in controller simulation |
 | S5-H04 | Observe the startup sweep on GP12 and check a target at known range | Pending Pico W bench test |
+| S5-U07 | Keep a silent input interlocked at boot and reject implausibly short pulses | Passed on host |
+| S5-U08 | Accept a measured echo while preserving stuck-high and timer fault behavior | Passed on host |
+| S5-U09 | Accept a complete out-of-range pulse as sensor response evidence | Passed on host |
+| S5-I07 | Exercise GP12 pulse selection and GP16 trigger with high ECHO using modeled RP2040 registers | Passed on host |
 
 Run the controller and planner test from the repository root:
 

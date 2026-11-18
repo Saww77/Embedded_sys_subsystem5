@@ -131,8 +131,19 @@ void vehicle_submit_obstacle_range(unsigned range)
     if (s5_accept_range(&obstacle_range, range)) {
         obstacle_range_at = now_ms();
         if (obstacle_range.blocked) start_pending = FALSE;
-        if (!detouring() && (!obstacle_range.blocked || !s5_range_available(range)))
+        if (!detouring() && !obstacle_range.blocked) {
+            data.obstacle_valid = s5_range_measured(range);
+            data.obstacle_profile = false;
+            if (data.obstacle_valid) {
+                data.near_mm = range;
+                data.width_mm = S5_UNKNOWN_WIDTH;
+                data.clear_left_mm = data.clear_right_mm = S5_UNKNOWN_RANGE;
+                data.obstacle_angle = S5_CENTRE_ANGLE;
+                data.obstacle_timestamp_ms = obstacle_range_at;
+            }
+        } else if (!detouring() && !s5_range_available(range)) {
             data.obstacle_valid = FALSE;
+        }
     }
     unlock();
 }
@@ -157,6 +168,7 @@ void vehicle_submit_obstacle_profile(S5_PROFILE profile, BOOL complete)
     data.obstacle_angle = profile.angle_deg;
     data.obstacle_timestamp_ms = now;
     data.obstacle_valid = TRUE;
+    data.obstacle_profile = true;
     if (complete && model.avoidance.phase == S5_PROFILE_PATH) {
         full_profile = profile;
         full_profile_at = now;

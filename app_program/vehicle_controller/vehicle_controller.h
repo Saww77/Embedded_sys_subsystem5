@@ -29,7 +29,7 @@ typedef struct {
     unsigned height_mm,terrain_phase;
     unsigned near_mm:12, width_mm:11, clear_left_mm:12, clear_right_mm:12;
     unsigned obstacle_angle:7, obstacle_no_echo:1;
-    unsigned avoidance_phase:4, avoidance_side:2;
+    unsigned avoidance_phase:4, avoidance_side:2, obstacle_profile:1;
     unsigned telemetry_drops,timing_fault_gap_us,control_gap_limit_us;
     VC_START_BLOCK start_block,last_start_reject;
     BOOL motor_ready,link_ready,start_pending,stop_pending,reset_pending;
