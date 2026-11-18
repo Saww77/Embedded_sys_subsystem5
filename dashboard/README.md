@@ -24,11 +24,11 @@ The Pico must run the MQTT firmware (`make NET=lwip MQTT=1`), not the normal non
 - **Wheels/motion:** measured left/right RPM; propulsion PWM; actual motor mode; global speed level; recent 120-sample RPM trend; raw motor-fault labels; bounded-move progress counts.
 - **Line/barcode:** left/right black-detection flags, centre flag, reported barcode letter.
 - **Terrain:** reported height in millimetres and terrain phase.
-- **Obstacle:** nearest distance, width, left/right clearance in millimetres.
+- **Obstacle:** nearest distance, estimated width, left/right clearance in millimetres, and angle of the closest return.
 - **Connection:** live heartbeat age, Wi-Fi/broker/subscription flags and bridge drop flags.
 - **Commands/events:** exact binary START/STOP, Pico acknowledgment and a bounded connection/mission/fault event list.
 
-All values come from received MQTT payloads. The current two-sensor Pico configuration leaves the centre flag unset; an unset flag does not prove a centre sensor is installed or reading white. Barcode decoding is currently disabled. Terrain and obstacle producers are not connected in the normal firmware, so those cards correctly stay **No data** until real producers submit valid measurements. They do not display invented zeros.
+All values come from received MQTT payloads. The current two-sensor Pico configuration leaves the centre flag unset; an unset flag does not prove a centre sensor is installed or reading white. Barcode decoding is currently disabled. Terrain and obstacle cards show **No data** until their producers submit a valid measurement. An obstacle profile can contain a closest return before the finer scan resolves its width or clearance. An ultrasonic echo fault is shown under vehicle faults.
 
 The matching diagnostics firmware additionally publishes normalized IR darkness, target RPM, controller stop reason and telemetry-drop count on `/controller`. Older firmware does not publish these fields. Raw ADC values, tilt, turn rate and total distance remain unavailable. Wheel progress is counts for bounded moves, not cumulative distance. The global speed level is a legacy selection, not the per-wheel fine-RPM target. A displayed mission state reports controller intent; actual wheel RPM reports measured motion.
 
@@ -55,7 +55,7 @@ Subscriptions use the configured root and these suffixes:
 | `motion` |9| S2_STATUS packed bits: mode0:2, level2:3, faults5:4, L RPM9:9, R RPM18:9, L PWM27:7, R PWM34:7, L progress41:13, R progress54:13 |
 | `line` |1| L/C/R black bits0/1/2, barcode bits3..5 |
 | `terrain` |2| height0:11, phase11:3 |
-| `obstacle` |6| nearest0:12, width12:11, left23:12, right35:12 |
+| `obstacle` |6 / 7| nearest0:12, width12:11, left23:12, right35:12. Seven-byte packets add angle minus 30° at 47:7. Width 2047 and clearance 4095 mean unavailable in seven-byte packets. |
 
 Bit numbering starts at the least significant bit of byte0. Fields use the firmware's little-endian packing. `offset:width` notation is used above. `mqtt_protocol.py` validates lengths, ranges and unused bits before displaying telemetry. START publishes `0x01`, STOP `0x00`, and stopped-only RESET `0x02` to `/command`, QoS0, non-retained. Strings such as `START` are not valid Pico commands.
 

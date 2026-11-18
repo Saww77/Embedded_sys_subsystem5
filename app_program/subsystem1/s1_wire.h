@@ -17,6 +17,6 @@ void s1_wire_put(unsigned char *bytes, unsigned bit, unsigned count, unsigned va
 unsigned s1_wire_get(const unsigned char *bytes, unsigned bit, unsigned count);
 int s1_wire_line(unsigned char out[1], unsigned ir, unsigned barcode);
 int s1_wire_terrain(unsigned char out[2], unsigned height_mm, unsigned phase);
-int s1_wire_obstacle(unsigned char out[6], unsigned nearest_mm, unsigned width_mm,
-                     unsigned left_mm, unsigned right_mm);
+int s1_wire_obstacle(unsigned char out[7], unsigned nearest_mm, unsigned width_mm,
+                     unsigned left_mm, unsigned right_mm, unsigned angle_deg);
 #endif

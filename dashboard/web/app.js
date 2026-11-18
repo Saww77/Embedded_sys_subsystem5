@@ -184,8 +184,9 @@ function drawTelemetry(data) {
   text("terrain-height", terrain?.height_mm);
   text("terrain-phase", terrain?.phase);
   for (const [id, key] of [["nearest", "nearest_mm"], ["width", "width_mm"], ["left", "left_mm"], ["right", "right_mm"]]) {
-    text("obstacle-" + id, obstacle ? obstacle[key] + " mm" : null);
+    text("obstacle-" + id, obstacle?.[key] == null ? null : obstacle[key] + " mm");
   }
+  text("obstacle-angle", obstacle?.angle_deg == null ? null : obstacle.angle_deg + "°");
   const history = data?.motion_history ?? [];
   const maximum = Math.max(30, ...history.flatMap(p => [p.left_rpm, p.right_rpm]));
   for (const side of ["left", "right"]) {

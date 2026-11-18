@@ -12,8 +12,9 @@ def command_payload(command):
     raise ValueError('command must be start, stop or reset')
 
 def decode_telemetry(kind, payload):
-    sizes = dict(vehicle=1, motion=9, line=1, terrain=2, obstacle=6, controller=25)
-    if kind not in sizes or len(payload) not in ((25,31) if kind=='controller' else (sizes[kind],)):
+    sizes = dict(vehicle=(1,), motion=(9,), line=(1,), terrain=(2,),
+                 obstacle=(6, 7), controller=(25, 31))
+    if len(payload) not in sizes.get(kind, ()):
         raise ValueError('Incorrect binary telemetry length')
     word = int.from_bytes(payload, 'little')
     def bits(offset, width): return (word >> offset) & ((1 << width) - 1)
@@ -78,6 +79,18 @@ def decode_telemetry(kind, payload):
         return dict(height_mm=height, phase=phase)
     fields = dict(nearest_mm=bits(0, 12), width_mm=bits(12, 11),
                   left_mm=bits(23, 12), right_mm=bits(35, 12))
-    if word >> 47 or fields['width_mm'] > 2000 or max(fields['nearest_mm'], fields['left_mm'], fields['right_mm']) > 4000:
-        raise ValueError('Invalid obstacle payload')
+    if len(payload) == 7:
+        angle = bits(47, 7) + 30
+        if word >> 54 or angle > 150:
+            raise ValueError('Invalid obstacle angle or reserved bits')
+        fields['angle_deg'] = angle
+        for key, unknown in (('width_mm', 2047), ('left_mm', 4095), ('right_mm', 4095)):
+            if fields[key] == unknown:
+                fields[key] = None
+    elif word >> 47:
+        raise ValueError('Invalid obstacle reserved bits')
+    for key, maximum in (('nearest_mm', 4000), ('width_mm', 2000),
+                         ('left_mm', 4000), ('right_mm', 4000)):
+        if fields[key] is not None and fields[key] > maximum:
+            raise ValueError('Invalid obstacle range')
     return fields

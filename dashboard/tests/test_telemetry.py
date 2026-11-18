@@ -33,6 +33,22 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(decode_telemetry('terrain',(125|(2<<11)).to_bytes(2,'little')),dict(height_mm=125,phase=2))
         obstacle=(500|(80<<12)|(200<<23)|(300<<35)).to_bytes(6,'little')
         self.assertEqual(decode_telemetry('obstacle',obstacle),dict(nearest_mm=500,width_mm=80,left_mm=200,right_mm=300))
+    def test_extended_obstacle_sample_and_freshness(self):
+        packet = bytes.fromhex('8c f0 ff ff 7f 94 06')
+        self.send('obstacle', packet, retained=True)
+        self.assertIsNone(self.d.snapshot()['telemetry']['obstacle']['data'])
+        self.send('obstacle', packet)
+        sample = self.d.snapshot()['telemetry']['obstacle']
+        self.assertTrue(sample['fresh'])
+        self.assertEqual(sample['data'], dict(nearest_mm=140, width_mm=None,
+                                              left_mm=None, right_mm=655, angle_deg=43))
+        self.now += 3
+        for invalid in (packet[:-1], (int.from_bytes(packet, 'little') | (1 << 55)).to_bytes(7, 'little'),
+                        (121 << 47).to_bytes(7, 'little')):
+            self.send('obstacle', invalid)
+        self.assertFalse(self.d.snapshot()['telemetry']['obstacle']['fresh'])
+        self.assertEqual(self.d.snapshot()['telemetry']['obstacle']['data'], sample['data'])
+
     def test_each_topic_has_independent_freshness(self):
         self.send('motion',motion_packet())
         self.now+=3

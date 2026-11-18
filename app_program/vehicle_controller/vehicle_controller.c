@@ -3,6 +3,7 @@
 #include "../subsystem2/motion_core.h"
 #include "../subsystem2/motion_config.h"
 #include "../subsystem1/s1_comm.h"
+#include "../subsystem5/s5_profile.h"
 #ifndef VC_AUTO_START
 #if TM_MQTT
 #define VC_AUTO_START 0
@@ -89,15 +90,32 @@ BOOL vehicle_submit_terrain(unsigned height,unsigned phase)
     data.height_mm=height;data.terrain_phase=phase;
     data.terrain_timestamp_ms=now_ms();data.terrain_valid=TRUE;unlock();return TRUE;
 }
-BOOL vehicle_submit_obstacle(unsigned near,unsigned width,unsigned left,unsigned right,BOOL blocked)
+void vehicle_update_obstacle_guard(BOOL blocked, BOOL no_echo)
 {
-    if(near>4000||width>2000||left>4000||right>4000||!lock())return FALSE;
-    data.near_mm=near;data.width_mm=width;data.clear_left_mm=left;data.clear_right_mm=right;
-    data.obstacle_timestamp_ms=now_ms();data.obstacle_valid=TRUE;
-    /* A stale blocked report remains blocked until explicitly cleared. */
-    data.obstacle_blocked=blocked;
-    if(blocked){stop_pending=TRUE;start_pending=FALSE;auto_pending=FALSE;}
-    unlock();return TRUE;
+    if (!lock()) return;
+    if (blocked) start_pending = FALSE;
+    data.obstacle_blocked = blocked;
+    data.obstacle_no_echo = no_echo;
+    if (!blocked || no_echo) data.obstacle_valid = FALSE;
+    unlock();
+}
+
+BOOL vehicle_submit_obstacle_profile(unsigned near, unsigned width, unsigned left,
+                                     unsigned right, unsigned angle)
+{
+    if (near > 4000u || (width > 2000u && width != S5_UNKNOWN_WIDTH) ||
+        (left > 4000u && left != S5_UNKNOWN_RANGE) ||
+        (right > 4000u && right != S5_UNKNOWN_RANGE) ||
+        angle < S5_MIN_ANGLE || angle > S5_MAX_ANGLE || !lock()) return FALSE;
+    data.near_mm = near;
+    data.width_mm = width;
+    data.clear_left_mm = left;
+    data.clear_right_mm = right;
+    data.obstacle_angle = angle;
+    data.obstacle_timestamp_ms = now_ms();
+    data.obstacle_valid = TRUE;
+    unlock();
+    return TRUE;
 }
 BOOL vehicle_get_snapshot(VEHICLE_SNAPSHOT *out)
 {
@@ -140,7 +158,7 @@ static void vehicle_service_once(void)
             in.left_rpm=data.left_rpm;in.right_rpm=data.right_rpm;
             in.obstacle_blocked=data.obstacle_blocked;
             in.stop=stop_pending;in.start=start_pending;
-            if(auto_pending && ready && in.line_valid && in.line_age_ms<=VC_LINE_MAX_AGE_MS){
+            if(auto_pending && ready && !in.obstacle_blocked && in.line_valid && in.line_age_ms<=VC_LINE_MAX_AGE_MS){
                 in.start=TRUE;auto_pending=FALSE;
             }
             start_pending=stop_pending=FALSE;

@@ -44,16 +44,18 @@ int s1_wire_terrain(unsigned char out[2], unsigned height_mm, unsigned phase)
     return 1;
 }
 
-int s1_wire_obstacle(unsigned char out[6], unsigned nearest_mm, unsigned width_mm,
-                     unsigned left_mm, unsigned right_mm)
+int s1_wire_obstacle(unsigned char out[7], unsigned nearest_mm, unsigned width_mm,
+                     unsigned left_mm, unsigned right_mm, unsigned angle_deg)
 {
-    unsigned i;
-    if (out == 0 || nearest_mm > 4000u || width_mm > 2000u ||
-        left_mm > 4000u || right_mm > 4000u) { return 0; }
-    for (i = 0; i < 6u; ++i) { out[i] = 0; }
+    if (!out || nearest_mm > 4000u || (width_mm > 2000u && width_mm != 2047u) ||
+        (left_mm > 4000u && left_mm != 4095u) ||
+        (right_mm > 4000u && right_mm != 4095u) ||
+        angle_deg < 30u || angle_deg > 150u) return 0;
+    for (unsigned i = 0; i < 7u; ++i) out[i] = 0;
     s1_wire_put(out, 0u, 12u, nearest_mm);
     s1_wire_put(out, 12u, 11u, width_mm);
     s1_wire_put(out, 23u, 12u, left_mm);
     s1_wire_put(out, 35u, 12u, right_mm);
+    s1_wire_put(out, 47u, 7u, angle_deg - 30u);
     return 1;
 }

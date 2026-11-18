@@ -36,10 +36,10 @@ ER s1_publish_terrain(unsigned height_mm, unsigned phase)
 }
 
 ER s1_publish_obstacle(unsigned nearest_mm, unsigned width_mm,
-                       unsigned left_mm, unsigned right_mm)
+                       unsigned left_mm, unsigned right_mm, unsigned angle_deg)
 {
-    unsigned char data[6];
-    if (!s1_wire_obstacle(data, nearest_mm, width_mm, left_mm, right_mm)) { return E_PAR; }
+    unsigned char data[7];
+    if (!s1_wire_obstacle(data, nearest_mm, width_mm, left_mm, right_mm, angle_deg)) { return E_PAR; }
     return publish(MQTT_ROUTE_OBSTACLE, data, sizeof(data));
 }
 
@@ -84,7 +84,7 @@ void s1_comm_task(INT stacd, void *exinf)
             (void)publish(MQTT_ROUTE_ACK, &ack, 1u);
         }
         SYSTIM time;tk_get_tim(&time);
-        if((uint32_t)(time.lo-telemetry_at)>=200u){
+        if((uint32_t)(time.lo-telemetry_at)>=1000u){
             telemetry_at=time.lo;
             s1_publish_telemetry();
         }

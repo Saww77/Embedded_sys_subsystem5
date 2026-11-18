@@ -21,7 +21,7 @@ subsystem, ask its owner or open a pull request for them to review.
 | 2 | *example:* Producer: makes a sample every 300 ms | | | `app_program/subsystem2/` | `testing/subsystem2/` |
 | 3 | *example:* Consumer: collects samples into statistics | | | `app_program/subsystem3/` | `testing/subsystem3/` |
 | 4 | *example:* Monitor: prints reports, pauses the LED | | | `app_program/subsystem4/` | `testing/subsystem4/` |
-| 5 | | | | `app_program/subsystem5/` | `testing/subsystem5/` |
+| 5 | Ultrasonic scanning and obstacle profiling | | | `app_program/subsystem5/` | `testing/subsystem5/` |
 
 Shared files (`app_program/app_main.c`, `app_program/app.h`, this file)
 are changed only by agreement of the team. The exception is claiming an empty
@@ -54,13 +54,13 @@ fixed.
 | GP3 | | |
 | GP4 | S4 (Buddy 4) | IMU SDA (I2C0) |
 | GP5 | S4 (Buddy 4) | IMU SCL (I2C0) |
-| GP6 | | |
-| GP7 | | |
+| GP6 | S5 | Ultrasonic trigger |
+| GP7 | S5 | Level-shifted ultrasonic echo |
 | GP8 | | |
 | GP9 | | |
 | GP10 | | |
 | GP11 | | |
-| GP12 | | |
+| GP12 | S5 | Servo PWM at 50 Hz |
 | GP13 | | |
 | GP14 | | |
 | GP15 | | |
@@ -111,7 +111,7 @@ the drivers have no locking to stop it.
 | SPI0 | | | |
 | SPI1 | | | |
 | ADC | | | GP26–GP28 |
-| PWM slices (list) | | | |
+| PWM slices 3 B and 6 A | Subsystem 5 | `obstacle_scan` | GP7 (echo capture), GP12 (servo) |
 | WiFi radio, TCP/IP, MQTT | *kernel* | `cyw43_utk_task` (built in) | GP23–25, GP29 |
 
 ### WiFi and MQTT are special
@@ -150,7 +150,7 @@ change it only by team agreement. Write down every task you create.
 | 2 | 14–15 | *example:* producer_task – 14 – core 1 |
 | 3 | 16–17 | *example:* consumer_task – 16 – core 0 |
 | 4 | 18–19 | *example:* monitor_task – 18 – any |
-| 5 | 20–21 | |
+| 5 | 20–21 | `obstacle_scan` – 20 – core 0 |
 
 Core: `TP_PRC1` = core 0, `TP_PRC2` = core 1, or "any".
 
@@ -167,7 +167,7 @@ sends to it or waits on it. Agree on the data format before coding.
 | IF-03 | S3 → S4 | message buffer + event flag (owned by S4) | `mbf_summary`, `flg_events` | text line ≤ `S4_SUMMARY_MAX` bytes, then `FLG_BATCH` | *example* |
 | IF-04 | S4 → S3 | shared data under a mutex (owned by S3) | `app_stats`, `mtx_stats` | `APP_STATS`, read only while locked | *example* |
 | IF-05 | S4 → S1 | task control | `tid_led` | `tk_sus_tsk` / `tk_rsm_tsk` / `tk_chg_pri` | *example* |
-| IF-06 | | | | | |
+| IF-06 | S5 → vehicle controller → S1 | Mutex-protected controller snapshot | Controller mutex | Obstacle interlock, echo fault and profile fields | |
 
 Each interface is tested by at least one integration test
 (`testing/integration/TEST_LOG.md`).
@@ -179,7 +179,7 @@ limit there. The numbers below are the example's usage.
 
 | Object | Limit | S1 | S2 | S3 | S4 | S5 |
 |---|---|---|---|---|---|---|
-| Task | 32 | 1 | 1 | 1 | 1 | |
+| Task | 32 | 1 | 1 | 1 | 1 | 1 |
 | Semaphore | 16 | | 1 | | | |
 | Event flag | 16 | | | | 1 | |
 | Mailbox | 12 | | | 1 | | |

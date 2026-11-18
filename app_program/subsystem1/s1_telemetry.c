@@ -48,6 +48,7 @@ void s1_publish_telemetry(void)
     if((s1_connection_status()&3u)!=3u || !vehicle_get_snapshot(&s))return;
     unsigned faults=s.motor_faults?S1_FAULT_MOTOR:0;
     if(s.motor_faults&1u)faults|=S1_FAULT_ENCODER;
+    if(s.obstacle_no_echo)faults|=S1_FAULT_NO_ECHO;
     if(s.reason==VC_REASON_LINK)faults|=S1_FAULT_WIFI;
     account(s1_publish_vehicle(s.state,faults));
     publish_controller(&s);
@@ -59,7 +60,9 @@ void s1_publish_telemetry(void)
     }
     if(s.terrain_valid && (uint32_t)(s.timestamp_ms-s.terrain_timestamp_ms)<=VC_SENSOR_MAX_AGE_MS)
         account(s1_publish_terrain(s.height_mm,s.terrain_phase));
-    if(s.obstacle_valid && (uint32_t)(s.timestamp_ms-s.obstacle_timestamp_ms)<=VC_SENSOR_MAX_AGE_MS)
-        account(s1_publish_obstacle(s.near_mm,s.width_mm,s.clear_left_mm,s.clear_right_mm));
+    /* A full coarse/fine scan can take up to three seconds. */
+    if(s.obstacle_valid && (uint32_t)(s.timestamp_ms-s.obstacle_timestamp_ms)<=4000u)
+        account(s1_publish_obstacle(s.near_mm,s.width_mm,s.clear_left_mm,
+                                    s.clear_right_mm,s.obstacle_angle));
 #endif
 }
