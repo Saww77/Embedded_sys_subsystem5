@@ -96,8 +96,8 @@ make -j8
 ```
 
 A successful build ends with a line like
-`tools/elf2uf2 mtk3pico_smp1_usb_cdc_wifi.elf mtk3pico_smp1_usb_cdc_wifi.uf2`.
-Your firmware is **`build_make/mtk3pico_smp1_usb_cdc_wifi.uf2`**.
+`tools/elf2uf2 mtk3pico_smp1_usb_cdc_wifi_nos4.elf mtk3pico_smp1_usb_cdc_wifi_nos4.uf2`.
+Your firmware is **`build_make/mtk3pico_smp1_usb_cdc_wifi_nos4.uf2`**.
 
 If `make` stops with an error, it tells you which one is wrong:
 `arm-none-eabi-gcc not found` means fix `PATH`, and
@@ -149,8 +149,8 @@ subfolders, is compiled automatically.
 
 **Working as a team:** record owners, pins, priorities and the interfaces
 between subsystems in **`TEAM.md`**, and record every test in **`testing/`**
-(see `testing/README.md`). `make TEST=1` builds a test image that runs all
-the subsystem tests at power-up. Short videos of tests and demos are shared
+(see `testing/README.md`). `make TEST=1` builds a test image that runs the
+enabled subsystem tests at power-up. Short videos of tests and demos are shared
 as unlisted YouTube links, listed in **`videos/`**.
 
 Pins: use **GP0–GP22 and GP26–GP28**. GP0/GP1 are free unless your team
@@ -162,13 +162,14 @@ After editing, run `make -j8` again in `build_make` and copy the new `.uf2`.
 
 ---
 
-## 3. Build options: `SMP`, `CONSOLE`, `WIFI`, `TEST`, `CRASH_REPORT`
+## 3. Build options
 
 `make` on its own uses the defaults. To build differently, put options
 after `make`. They can be combined in any order:
 
 ```sh
-make -j8                          # defaults: SMP=1 CONSOLE=usb_cdc WIFI=cyw43 TEST=0 CRASH_REPORT=0
+make -j8                          # default firmware without Subsystem 4
+make S4=1 -j8                     # include the IMU subsystem after connecting its sensor
 make SMP=0 -j8                    # single-core build
 make CONSOLE=uart WIFI=none -j8   # no USB console, radio off (no Pico SDK needed)
 make TEST=1 -j8                   # firmware with the subsystem self-tests
@@ -180,7 +181,7 @@ example, to track down a crash in the test build while running on one core only:
 
 ```sh
 make SMP=0 TEST=1 CRASH_REPORT=1 -j8
-#  -> build_make/mtk3pico_smp0_usb_cdc_wifi_crash_test.uf2
+#  -> build_make/mtk3pico_smp0_usb_cdc_wifi_crash_nos4_test.uf2
 ```
 
 Any option you leave out keeps its default (here `CONSOLE=usb_cdc` and
@@ -192,7 +193,8 @@ the next plain `make` goes back to the defaults.
 | `SMP` | `0`, **`1`** | `1` runs the kernel on both RP2040 cores; `0` uses core 0 only | `smp1` / `smp0` | `TK_SUPPORT_SMP` (1 or 0) |
 | `CONSOLE` | **`usb_cdc`**, `uart` | where `tm_printf` output goes. `usb_cdc` = USB cable; `uart` = UART0 only (GP0 TX / GP1 RX, needs a USB-serial adapter) | `_usb_cdc` / `_uart` | `TM_CONSOLE_USB_CDC` |
 | `WIFI` | **`cyw43`**, `none` | `cyw43` powers up the Pico W radio and its driver task; `none` leaves the radio off | `_wifi` / *(nothing)* | `TM_WIFI_CYW43` |
-| `TEST` | **`0`**, `1` | `1` compiles every `subsystemN_test.c` and runs the tests at power-up | `_test` / *(nothing)* | `APP_TEST` (1 or 0) |
+| `S4` | **`0`**, `1` | `1` includes the IMU subsystem, its terrain telemetry and IMU-based stops in the normal firmware | `_nos4` when disabled | `APP_S4` (1 or 0) |
+| `TEST` | **`0`**, `1` | `1` builds and runs the enabled subsystem tests at power-up | `_test` / *(nothing)* | `APP_TEST` (1 or 0) |
 | `CRASH_REPORT` | **`0`**, `1` | `1` also copies the console to UART0 on **GP0 (TX) / GP1 (RX)**, 115200 baud, so you can see the last messages and the kernel's crash report (see below). **Uses GP0/GP1.** `CONSOLE=uart` always does this. | `_crash` / *(nothing)* | `TM_CONSOLE_UART` (1 or 0) |
 
 **Why `CRASH_REPORT` exists.** USB output is not sent the moment you call
@@ -207,7 +209,7 @@ either setting. If a subsystem has claimed GP0/GP1 in `TEAM.md`, unplug that
 hardware before using `CRASH_REPORT=1`.
 
 The options are part of the image name, e.g.
-`mtk3pico_smp1_usb_cdc_wifi_test.uf2`, so you can always tell which build
+`mtk3pico_smp1_usb_cdc_wifi_nos4_test.uf2`, so you can always tell which build
 you are flashing. Switching options needs no `make clean`: the makefile
 notices and recompiles everything.
 

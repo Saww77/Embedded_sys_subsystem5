@@ -55,6 +55,9 @@
 
 #include "app.h"
 #include "vehicle_controller/vehicle_controller.h"
+#ifndef APP_S4
+#define APP_S4 1
+#endif
 #if APP_S5_BENCH
 #include "subsystem2/motion_hw.h"
 #include "subsystem5/subsystem5.h"
@@ -124,7 +127,11 @@ EXPORT INT usermain(void)
 	CHECK(subsystem1_init(), "subsystem1_init");
 	CHECK(subsystem2_init(), "subsystem2_init");
 	CHECK(subsystem3_init(), "subsystem3_init");
+#if APP_S4
 	CHECK(subsystem4_init(), "subsystem4_init");
+#else
+	tm_printf((UB*)"[APP] Subsystem 4 disabled (S4=0)\n");
+#endif
 	CHECK(subsystem5_init(), "subsystem5_init");
 
 	ER vc_er = vehicle_init();
@@ -136,10 +143,12 @@ EXPORT INT usermain(void)
 	CHECK(subsystem1_start(), "subsystem1_start");
 	CHECK(subsystem2_start(), "subsystem2_start");
 	CHECK(subsystem3_start(), "subsystem3_start");
+#if APP_S4
 	CHECK(subsystem4_start(), "subsystem4_start");
+#endif
 	CHECK(subsystem5_start(), "subsystem5_start");
 
-	tm_printf((UB*)"all subsystems started\n\n");
+	tm_printf((UB*)"enabled subsystems started\n\n");
 
 #if APP_TEST
 	/* Test build (make TEST=1): run every subsystem's tests in turn,
@@ -149,7 +158,9 @@ EXPORT INT usermain(void)
 	subsystem1_test();
 	subsystem2_test();
 	subsystem3_test();
+#if APP_S4
 	subsystem4_test();
+#endif
 	subsystem5_test();
 	tm_printf((UB*)"[TEST] === test run end ===\n");
 #endif
