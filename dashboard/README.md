@@ -83,7 +83,7 @@ Replace both the dashboard and Pico firmware with matching current versions. A h
 
 An open track clears the obstacle interlock after two no-target pings. A measured forward range beyond 20 cm also clears it. If the panel shows **Ultrasonic echo unavailable** with fresh telemetry, keep the car stopped and hold a flat target 30–50 cm straight ahead. If the fault stays on, check sensor power, common ground, GP16 trigger, and the 3.3 V ECHO signal at GP17. Use a divider for a 5 V ECHO output. If the panel shows **Stale**, check the Pico’s Wi-Fi and broker connection first.
 
-The firmware commands a short servo sweep during startup. The default is the Robo Pico servo header marked **GP12**. To compare with the **GP15** header, build from the repository root with `make -C build_make NET=lwip MQTT=1 S5_SERVO_PIN=15`, flash the UF2 ending in `_servo15.uf2`, and move the servo plug to GP15 with power off. Verify the servo supply and plug orientation if neither header moves the servo.
+Connect the scan servo to the Robo Pico servo header marked **GP12**. The firmware commands a short sweep during startup. If the servo stays still, check its supply and plug orientation.
 
 ## Reset a motor fault
 

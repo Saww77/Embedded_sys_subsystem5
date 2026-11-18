@@ -2,7 +2,7 @@
 
 ## Integration
 
-The Pico W scan task owns GP16 (trigger), GP17 (3.3 V echo input), and the 50 Hz servo output. GP12 (slice 6A) is the default. GP15 (slice 7B) is available with `S5_SERVO_PIN=15`. The boot check commands 60°, 120°, and 90° before enabling ranging. The hardware counts echo width on PWM slice 0B while the scan task sleeps.
+The Pico W scan task owns GP16 (trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo output on slice 6A). The boot check commands 60°, 120°, and 90° before enabling ranging. The hardware counts echo width on PWM slice 0B while the scan task sleeps.
 
 During line following a valid forward return within 300 mm caps approach targets at 20 RPM. At 150 mm or below the controller stops, waits for the wheels to settle, and requests a coarse sweep followed by a fine scan around the forward obstacle. The scan estimates width from the lateral edges of the clustered returns and reports the adjacent side ranges.
 
@@ -56,7 +56,7 @@ The ELF counts cover static sections. The scan task also uses a kernel-allocated
 | S5-U05 | Preserve the interlock after a single open ping following a close return or fault | Passed on host |
 | S5-U06 | Reject a scan with close returns at every angle as evidence of side clearance | Passed on host |
 | S5-I06 | Complete either detour with a confirmed open side and no measured width | Passed in controller simulation |
-| S5-H04 | Observe the startup sweep on GP12 or GP15 and check a target at known range | Pending Pico W bench test |
+| S5-H04 | Observe the startup sweep on GP12 and check a target at known range | Pending Pico W bench test |
 
 Run the controller and planner test from the repository root:
 
