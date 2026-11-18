@@ -16,9 +16,9 @@ Encoder pulse inputs follow the updated report. Left uses GP2 and right uses GP3
 
 ## Stationary hardware check
 
-With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It sets the drive outputs low and repeats the production GP12 sweep and width calculation, printing the commanded angles and raw readings over USB serial at 115200.
+With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It holds GP12 at 90° until the ultrasonic sensor reports two consecutive valid ranges at or below 200 mm. It runs one production sweep and width calculation, then centres the servo. Remove the target or move it beyond 250 mm until the log says `Test rearmed`. USB serial at 115200 prints the detection, commanded angles, raw echoes and estimated width.
 
-For a range check, hold a flat target 30–50 cm ahead when the sensor is at 90°. A working sensor reports about 1,750–2,920 µs and 300–500 mm. For a width check, place a narrow flat-front box 12–15 cm directly ahead with clear space on both sides and wait for a full sweep. A resolved profile prints `width=… mm`. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
+For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, move a narrow flat-front box to 12–15 cm directly ahead with clear space on both sides. A resolved profile prints `width=… mm`. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 
@@ -67,6 +67,7 @@ The ELF counts cover static sections. The scan task also uses a kernel-allocated
 | S5-U08 | Accept a measured echo while preserving stuck-high and timer fault behavior | Passed on host |
 | S5-U09 | Accept a complete out-of-range pulse as sensor response evidence | Passed on host |
 | S5-I07 | Exercise GP12 pulse selection and GP16 trigger with high ECHO using modeled RP2040 registers | Passed on host |
+| S5-I08 | Wait for two near echoes before sweeping, report width, and rearm only after two clear echoes | Passed with simulated bench input |
 
 Run the controller and planner test from the repository root:
 

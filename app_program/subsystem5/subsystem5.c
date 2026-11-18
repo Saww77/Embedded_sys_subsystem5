@@ -160,19 +160,42 @@ static void scan_task(INT stacd, void *exinf)
 }
 
 #if APP_S5_BENCH
+#define BENCH_PING_MS 350
+#define BENCH_RELEASE_MM 250u
+#define BENCH_CONFIRMATIONS 2u
+
+static unsigned bench_wait_for_echo(BOOL want_target)
+{
+    unsigned confirmed = 0;
+    for (;;) {
+        tk_dly_tsk(BENCH_PING_MS);
+        S5_PING ping = s5_hw_ping();
+        log_ping("[S5 BENCH]", want_target ? "waiting for target" : "waiting for clear",
+                 S5_CENTRE_ANGLE, ping);
+
+        unsigned range = ping.range_mm;
+        bool measured = s5_range_measured(range);
+        bool matches = want_target ? measured && range <= S5_CLEAR_MM :
+                       range == S5_OPEN_RANGE || (measured && range > BENCH_RELEASE_MM);
+        confirmed = matches ? confirmed + 1u : 0u;
+        if (confirmed == BENCH_CONFIRMATIONS) return range;
+    }
+}
+
 EXPORT void subsystem5_bench(void)
 {
     tm_printf((UB*)"[S5 BENCH] GP12 servo, GP16 trigger, GP17 echo. Drive outputs off.\n");
-    tm_printf((UB*)"[S5 BENCH] Use a flat-front box 120..150 mm straight ahead for width.\n");
+    tm_printf((UB*)"[S5 BENCH] Scan starts after two forward echoes within %u mm.\n", S5_CLEAR_MM);
     setup();
     for (;;) {
-        for (unsigned sample = 0; sample < 3; ++sample) {
-            log_ping("[S5 BENCH]", "forward", S5_CENTRE_ANGLE, s5_hw_ping());
-            tk_dly_tsk(350);
-        }
+        unsigned detected = bench_wait_for_echo(TRUE);
+        tm_printf((UB*)"[S5 BENCH] obstacle detected at %u mm. Starting width test.\n", detected);
         S5_PROFILE profile;
         (void)scan_obstacle(&profile, TRUE);
-        tk_dly_tsk(500);
+        tm_printf((UB*)"[S5 BENCH] Servo centred. Remove target or move it beyond %u mm to rearm.\n",
+                  BENCH_RELEASE_MM);
+        (void)bench_wait_for_echo(FALSE);
+        tm_printf((UB*)"[S5 BENCH] Test rearmed.\n");
     }
 }
 #endif
