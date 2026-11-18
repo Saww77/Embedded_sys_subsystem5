@@ -145,7 +145,8 @@ function drawTelemetry(data) {
   const diagnostic = topics.controller;
   const controller = diagnostic?.data;
   text("start-blocker", controller ? diagnostic.fresh ? controller.start_block_label : "Controller diagnostics stale" : "Controller diagnostics unavailable");
-  text("start-hint", controller && diagnostic.fresh ? controller.start_hint : "Use the matching Pico diagnostics firmware and dashboard to report the START blocker.");
+  text("start-hint", diagnostic?.fresh ? controller.start_hint :
+    "Waiting for live Pico diagnostics. Check the Pico’s Wi-Fi and broker connection.");
   text("ir-age", controller ? controller.line_age_ms === null ? "No valid sample" : controller.line_age_ms + " ms" : null);
   text("line-stop", controller ? controller.line_stop ? "Latched" : "No" : null);
   text("controller-detail", controller ? `IR darkness L/C/R: ${controller.left_dark} / ${controller.centre_dark} / ${controller.right_dark}. Target RPM L/R: ${controller.left_target_rpm} / ${controller.right_target_rpm}. Telemetry drops: ${controller.telemetry_drops}.` : "Waiting for live controller diagnostics.");

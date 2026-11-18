@@ -60,10 +60,10 @@ fixed.
 | GP9 | | |
 | GP10 | | |
 | GP11 | | |
-| GP12 | S5 | Servo PWM at 50 Hz |
+| GP12 | S5 | Default servo PWM at 50 Hz |
 | GP13 | | |
 | GP14 | | |
-| GP15 | | |
+| GP15 | S5 (alternate) | Servo PWM when built with `S5_SERVO_PIN=15` |
 | GP16 | S5 | Ultrasonic trigger |
 | GP17 | S5 | Level-shifted ultrasonic echo |
 | GP18 | | |
@@ -111,7 +111,7 @@ the drivers have no locking to stop it.
 | SPI0 | | | |
 | SPI1 | | | |
 | ADC | | | GP26–GP28 |
-| PWM slices 0 B and 6 A | Subsystem 5 | `obstacle_scan` | GP17 (echo capture), GP12 (servo) |
+| PWM slices 0 B and 6 A | Subsystem 5 | `obstacle_scan` | GP17 (echo capture), GP12 (servo), or GP15 (alternate servo on slice 7B) |
 | WiFi radio, TCP/IP, MQTT | *kernel* | `cyw43_utk_task` (built in) | GP23–25, GP29 |
 
 ### WiFi and MQTT are special

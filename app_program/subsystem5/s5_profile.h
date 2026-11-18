@@ -1,16 +1,15 @@
 #ifndef S5_PROFILE_H
 #define S5_PROFILE_H
 
+#include "s5_range.h"
+
 #define S5_MIN_ANGLE 30u
 #define S5_CENTRE_ANGLE 90u
 #define S5_MAX_ANGLE 150u
 #define S5_FINE_STEP 5u
 #define S5_SCAN_POINTS 25u
-#define S5_UNKNOWN_RANGE 4095u
 #define S5_UNKNOWN_WIDTH 2047u
 #define S5_PROFILE_TOLERANCE_MM 100u
-#define S5_STOP_MM 150u
-#define S5_CLEAR_MM 200u
 
 typedef struct {
     unsigned nearest_mm : 12;
@@ -20,6 +19,8 @@ typedef struct {
     unsigned angle_deg : 7;
     signed left_edge_mm : 13;
     signed right_edge_mm : 13;
+    unsigned left_edge_valid : 1;
+    unsigned right_edge_valid : 1;
 } S5_PROFILE;
 
 /* Index zero is 30 degrees, increasing to the right in 5-degree increments. */

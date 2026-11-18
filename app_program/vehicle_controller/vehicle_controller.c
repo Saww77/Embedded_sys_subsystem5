@@ -18,7 +18,7 @@ static VC_MODEL model;
 static BOOL start_pending,stop_pending,auto_pending,reset_pending;
 static uint32_t reset_refreshed;
 static BOOL obstacle_monitor;
-static unsigned obstacle_range_mm;
+static S5_RANGE_GATE obstacle_range;
 static uint32_t obstacle_range_at, full_profile_at;
 static S5_PROFILE full_profile;
 static BOOL full_profile_valid;
@@ -34,12 +34,12 @@ static bool line_hit(void)
 }
 static bool range_valid(uint32_t now)
 {
-    return obstacle_monitor && !data.obstacle_no_echo &&
+    return obstacle_monitor && s5_range_available(obstacle_range.range_mm) &&
            now - obstacle_range_at <= S5_RANGE_MAX_AGE_MS;
 }
 static bool obstacle_blocked(uint32_t now)
 {
-    return obstacle_monitor && (data.obstacle_blocked || !range_valid(now));
+    return obstacle_monitor && (obstacle_range.blocked || !range_valid(now));
 }
 static uint32_t now_ms(void) { SYSTIM t;tk_get_tim(&t);return t.lo; }
 static BOOL lock(void) { return guard>0 && tk_loc_mtx(guard,TMO_FEVR)>=E_OK; }
@@ -120,7 +120,7 @@ void vehicle_enable_obstacle_monitor(void)
 {
     if (!lock()) return;
     obstacle_monitor = TRUE;
-    data.obstacle_blocked = data.obstacle_no_echo = TRUE;
+    obstacle_range = (S5_RANGE_GATE){.range_mm = S5_UNKNOWN_RANGE, .blocked = true};
     start_pending = FALSE;
     unlock();
 }
@@ -128,20 +128,19 @@ void vehicle_enable_obstacle_monitor(void)
 void vehicle_submit_obstacle_range(unsigned range)
 {
     if (!lock()) return;
-    BOOL no_echo = range > 4000u;
-    obstacle_range_mm = range;
-    obstacle_range_at = now_ms();
-    data.obstacle_no_echo = no_echo;
-    data.obstacle_blocked = no_echo || range <= (data.obstacle_blocked ? S5_CLEAR_MM : S5_STOP_MM);
-    if (data.obstacle_blocked) start_pending = FALSE;
-    if (!detouring() && (!data.obstacle_blocked || no_echo)) data.obstacle_valid = FALSE;
+    if (s5_accept_range(&obstacle_range, range)) {
+        obstacle_range_at = now_ms();
+        if (obstacle_range.blocked) start_pending = FALSE;
+        if (!detouring() && (!obstacle_range.blocked || !s5_range_available(range)))
+            data.obstacle_valid = FALSE;
+    }
     unlock();
 }
 
 BOOL vehicle_obstacle_scan_allowed(void)
 {
     if (!lock()) return FALSE;
-    BOOL allowed = data.obstacle_blocked && (model.state == VC_IDLE || model.state == VC_FAULT ||
+    BOOL allowed = obstacle_range.blocked && (model.state == VC_IDLE || model.state == VC_FAULT ||
                                            (model.avoidance.phase == S5_PROFILE_PATH && !full_profile_valid));
     unlock();
     return allowed;
@@ -153,8 +152,8 @@ void vehicle_submit_obstacle_profile(S5_PROFILE profile, BOOL complete)
     uint32_t now = now_ms();
     data.near_mm = profile.nearest_mm;
     data.width_mm = profile.width_mm;
-    data.clear_left_mm = profile.left_mm;
-    data.clear_right_mm = profile.right_mm;
+    data.clear_left_mm = s5_range_measured(profile.left_mm) ? profile.left_mm : S5_UNKNOWN_RANGE;
+    data.clear_right_mm = s5_range_measured(profile.right_mm) ? profile.right_mm : S5_UNKNOWN_RANGE;
     data.obstacle_angle = profile.angle_deg;
     data.obstacle_timestamp_ms = now;
     data.obstacle_valid = TRUE;
@@ -241,9 +240,9 @@ static void vehicle_service_once(void)
     in.left_rpm = data.left_rpm;
     in.right_rpm = data.right_rpm;
     in.obstacle_blocked = obstacle_blocked(now);
-    in.obstacle_detected = range_valid(now) && obstacle_range_mm <= S5_STOP_MM;
+    in.obstacle_detected = range_valid(now) && obstacle_range.range_mm <= S5_STOP_MM;
     in.avoidance = (S5_AVOID_INPUT){
-        .now = now, .range_at = obstacle_range_at, .range_mm = obstacle_range_mm,
+        .now = now, .range_at = obstacle_range_at, .range_mm = obstacle_range.range_mm,
         .range_valid = range_valid(now), .profile_at = full_profile_at,
         .profile = full_profile, .profile_valid = full_profile_valid,
         .line_at = data.line_timestamp_ms, .line_hit = line_hit(),

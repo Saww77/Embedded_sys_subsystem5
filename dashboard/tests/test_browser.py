@@ -220,6 +220,7 @@ def main():
             expect(page.locator("#motion-freshness")).to_contain_text("Stale")
             expect(page.locator("#terrain-freshness")).to_contain_text("Stale")
             expect(page.locator("#mission-description")).to_contain_text("Last report only")
+            expect(page.locator("#start-hint")).to_contain_text("Waiting for live Pico diagnostics")
             assert page.locator("#start").is_enabled()  # Heartbeat does not refresh measurements.
             fixture.publish(root + "/motion", motion_packet(4)).wait_for_publish(timeout=5)
             fixture.publish(root + "/vehicle", bytes([5 | (1 << 3)])).wait_for_publish(timeout=5)

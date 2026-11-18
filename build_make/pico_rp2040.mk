@@ -81,6 +81,15 @@ endif
 MQTT_SUFFIX := _mqtt
 endif
 
+# GP12 is the report's servo port. GP15 supports troubleshooting on port 4.
+S5_SERVO_PIN ?= 12
+ifneq ($(S5_SERVO_PIN),12)
+ifneq ($(S5_SERVO_PIN),15)
+$(error Unknown S5_SERVO_PIN '$(S5_SERVO_PIN)'; use 12 or 15)
+endif
+SERVO_SUFFIX := _servo15
+endif
+
 # TEST=1 builds the subsystem self-tests into the image (APP_TEST=1 in C).
 # The image gets a _test suffix so it cannot be mistaken for the normal one.
 TEST ?= 0
@@ -134,7 +143,7 @@ endif
 # only the banner in the log revealed it.
 #
 #EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(TEST_SUFFIX)
-EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(DEMO_SUFFIX)$(TEST_SUFFIX)
+EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(DEMO_SUFFIX)$(SERVO_SUFFIX)$(TEST_SUFFIX)
 
 GCC := arm-none-eabi-gcc
 AS := arm-none-eabi-gcc
@@ -195,7 +204,7 @@ CFLAGS  += -DCNF_SMP=1
 ASFLAGS += -DCNF_SMP=1
 endif
 #CFLAGS  += -DAPP_TEST=$(TEST)
-CFLAGS  += -DAPP_TEST=$(TEST) -DAPP_BUDDY1_DEMO=$(BUDDY1_DEMO)
+CFLAGS  += -DAPP_TEST=$(TEST) -DAPP_BUDDY1_DEMO=$(BUDDY1_DEMO) -DS5_SERVO_PIN=$(S5_SERVO_PIN)
 CFLAGS  += -DTM_CONSOLE_UART=$(CRASH_REPORT)
 ifeq ($(CRASH_REPORT),0)
 CFLAGS  += -DBOARD_UART0_FREE=1
@@ -228,7 +237,7 @@ endif
 # before any recipe executes.
 ################################################################################
 #PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)
-PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)
+PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)-servo$(S5_SERVO_PIN)
 PROFILE_FILE := .build_profile
 
 ifneq ($(strip $(shell cat $(PROFILE_FILE) 2>/dev/null)),$(PROFILE_ID))

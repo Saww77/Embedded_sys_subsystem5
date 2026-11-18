@@ -46,7 +46,7 @@ def decode_telemetry(kind, payload):
                  'Check the IR sensor AO connections and ADC read errors on USB serial.',
                  'The sensor task is not supplying fresh data; inspect USB serial.',
                  'Place the car on a straight away from crossings, then restart the Pico. The junction test remains halted until restart.',
-                 'Move nearby objects away. The interlock clears after a valid forward reading beyond 20 cm.')
+                 'Move nearby objects away and wait for the ultrasonic sensor to confirm the path is clear.')
         age = int.from_bytes(payload[14:16], 'little')
         return dict(state=STATES[payload[1]], stop_reason=payload[2], start_block=payload[3],
                     start_block_label=blocks[payload[3]], start_hint=hints[payload[3]],

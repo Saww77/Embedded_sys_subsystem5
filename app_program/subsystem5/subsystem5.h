@@ -5,4 +5,8 @@
 
 #define S5_PRI_MAIN 20
 
+#ifndef S5_SERVO_PIN
+#define S5_SERVO_PIN 12u
+#endif
+
 #endif

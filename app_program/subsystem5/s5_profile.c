@@ -14,7 +14,7 @@ static int lateral_mm(unsigned index, unsigned range_mm)
 
 static int same_obstacle(unsigned range, unsigned reference)
 {
-    return range != S5_UNKNOWN_RANGE &&
+    return s5_range_measured(range) &&
            range <= reference + S5_PROFILE_TOLERANCE_MM &&
            reference <= range + S5_PROFILE_TOLERANCE_MM;
 }
@@ -35,15 +35,19 @@ S5_PROFILE s5_profile(const unsigned short samples[S5_SCAN_POINTS],
         .left_mm = left > first ? samples[left - 1] : S5_UNKNOWN_RANGE,
         .right_mm = right < last ? samples[right + 1] : S5_UNKNOWN_RANGE
     };
-    if (left > first && right < last && left < right) {
-        int left_edge = lateral_mm(left, samples[left]);
-        int right_edge = lateral_mm(right, samples[right]);
-        int width = right_edge - left_edge;
-        if (width > 0 && width <= MAX_WIDTH_MM) {
-            result.width_mm = (unsigned)width;
-            result.left_edge_mm = left_edge;
-            result.right_edge_mm = right_edge;
-        }
+    /* For routing, use the first clear bearing beyond each clustered edge.
+       This bounds the offset even if the opposite edge wasn't captured. */
+    if (left > first && s5_range_available(result.left_mm)) {
+        result.left_edge_mm = lateral_mm(left - 1, samples[left]);
+        result.left_edge_valid = true;
+    }
+    if (right < last && s5_range_available(result.right_mm)) {
+        result.right_edge_mm = lateral_mm(right + 1, samples[right]);
+        result.right_edge_valid = true;
+    }
+    if (result.left_edge_valid && result.right_edge_valid && left < right) {
+        int width = lateral_mm(right, samples[right]) - lateral_mm(left, samples[left]);
+        if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (unsigned)width;
     }
     return result;
 }

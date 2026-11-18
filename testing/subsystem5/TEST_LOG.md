@@ -2,13 +2,15 @@
 
 ## Integration
 
-The Pico W scan task owns GP16 (trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo). The hardware counts echo width on PWM slice 0B while the scan task sleeps. PWM slice 6A controls the servo. This leaves the motor encoder interrupt and motor PWM slices available to Subsystem 2.
+The Pico W scan task owns GP16 (trigger), GP17 (3.3 V echo input), and the 50 Hz servo output. GP12 (slice 6A) is the default. GP15 (slice 7B) is available with `S5_SERVO_PIN=15`. The boot check commands 60°, 120°, and 90° before enabling ranging. The hardware counts echo width on PWM slice 0B while the scan task sleeps.
 
 During line following a valid forward return within 300 mm caps approach targets at 20 RPM. At 150 mm or below the controller stops, waits for the wheels to settle, and requests a coarse sweep followed by a fine scan around the forward obstacle. The scan estimates width from the lateral edges of the clustered returns and reports the adjacent side ranges.
 
 The controller chooses the side with the larger measured clearance among routes with space for the vehicle and the estimated obstacle edge. It turns out, drives the calculated offset, realigns parallel to the original line, and passes the obstacle using 36 RPM encoder-bounded segments. It checks each heading before moving. If the return corridor is blocked, it can pass farther in short increments up to 300 mm total along the track. Two distinct IR detections during the bounded inward search trigger a stop, sensor-to-axle centering move and pivot back to the track heading. After a valid clear reading on the final heading, it resumes line following.
 
-STOP, stale inputs, motor faults, unconfirmed clearance, and a failed or timed-out line search end the detour stopped. An aborted detour requires fresh IR evidence and a new START. The ultrasonic sensor needs a measurable reflection on the relevant headings. Test initial turns, line alignment and clearance with the vehicle on a controlled track before evaluating the demonstration metrics. Calibrate the effective wheel track, servo direction and sensor-to-axle offset on the car.
+Two ordinary no-target pings count as open space for line following and detour clearance. The dashboard only displays measured distances. A stuck-high echo or overdue range sample still blocks motion. A signal held low can also look like an open track, so check range readings against a known target during bench validation.
+
+STOP, stale inputs, motor faults, unconfirmed clearance, and a failed or timed-out line search end the detour stopped. An aborted detour requires fresh IR evidence and a new START. Calibrate the effective wheel track, servo direction and sensor-to-axle offset on the car before evaluating the track metrics.
 
 Encoder pulse inputs follow the updated report. Left uses GP2 and right uses GP3.
 
@@ -50,6 +52,11 @@ The ELF counts cover static sections. The scan task also uses a kernel-allocated
 | S5-I04 | Simulate left and right detours, a blocked return, IR reacquisition and stop cases | Passed on host |
 | S5-I05 | Display chosen side and line-reacquired stage from live MQTT packets | Passed in browser with simulated Pico |
 | S5-H03 | Measure left/right bypass success, alignment, collision clearance and end-to-end duration | Pending track test |
+| S5-U04 | Clear the interlock after two open pings, including a long out-of-range pulse | Passed on host |
+| S5-U05 | Preserve the interlock after a single open ping following a close return or fault | Passed on host |
+| S5-U06 | Reject a scan with close returns at every angle as evidence of side clearance | Passed on host |
+| S5-I06 | Complete either detour with a confirmed open side and no measured width | Passed in controller simulation |
+| S5-H04 | Observe the startup sweep on GP12 or GP15 and check a target at known range | Pending Pico W bench test |
 
 Run the controller and planner test from the repository root:
 

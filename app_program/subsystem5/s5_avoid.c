@@ -7,7 +7,7 @@
 #define RETRY_STEP_MM 60u
 #define SEARCH_MARGIN_MM 40u
 #define MOTION_SETTLE_MS 260u
-#define SCAN_TIMEOUT_MS 6500u
+#define SCAN_TIMEOUT_MS 11000u
 #define PHASE_TIMEOUT_MS 6500u
 
 static bool at_or_after(uint32_t time, uint32_t reference)
@@ -37,23 +37,24 @@ void s5_avoid_begin(S5_AVOID *state, uint32_t now)
 
 static bool safe_side(unsigned clearance, unsigned offset)
 {
-    return clearance != S5_UNKNOWN_RANGE && offset <= MAX_OFFSET_MM &&
+    return s5_range_available(clearance) && offset <= MAX_OFFSET_MM &&
            clearance >= offset + S5_STOP_MM;
 }
 
 static bool choose_side(S5_AVOID *state, const S5_PROFILE *profile)
 {
-    if (profile->width_mm == S5_UNKNOWN_WIDTH || profile->nearest_mm < S5_TURN_CLEARANCE_MM ||
+    if (profile->nearest_mm < S5_TURN_CLEARANCE_MM ||
         profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM > MAX_PASS_MM)
         return false;
 
     unsigned left_offset = BODY_MARGIN_MM + (profile->left_edge_mm < 0 ? -profile->left_edge_mm : 0);
     unsigned right_offset = BODY_MARGIN_MM + (profile->right_edge_mm > 0 ? profile->right_edge_mm : 0);
-    bool left = safe_side(profile->left_mm, left_offset);
-    bool right = safe_side(profile->right_mm, right_offset);
+    bool left = profile->left_edge_valid && safe_side(profile->left_mm, left_offset);
+    bool right = profile->right_edge_valid && safe_side(profile->right_mm, right_offset);
     if (!left && !right) return false;
 
-    bool use_left = left && (!right || profile->left_mm >= profile->right_mm);
+    bool use_left = left && (!right || profile->left_mm > profile->right_mm ||
+                            (profile->left_mm == profile->right_mm && left_offset <= right_offset));
     state->side = use_left ? S5_LEFT : S5_RIGHT;
     state->offset_mm = use_left ? left_offset : right_offset;
     state->next_pass_mm = profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM;
