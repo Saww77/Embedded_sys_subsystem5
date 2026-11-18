@@ -20,7 +20,8 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from mqtt_protocol import command_payload, decode_telemetry, TELEMETRY_TOPICS
+from mqtt_protocol import (START_BLOCK_OBSTACLE, TELEMETRY_TOPICS, VEHICLE_FAULT_NO_ECHO,
+                           command_payload, decode_telemetry)
 
 HEARTBEAT_TIMEOUT = 15.0
 TELEMETRY_TIMEOUT = 2.0
@@ -187,6 +188,26 @@ class Dashboard:
                                    self.clock()-controller['received_at']<=TELEMETRY_TIMEOUT)
             if controller_live and controller['data']['start_block']:
                 ready = False
+            now = self.clock()
+            telemetry = {
+                name: {"data": sample['data'] if sample else None,
+                       "age": max(0, now - sample['received_at']) if sample else None,
+                       "time": sample['time'] if sample else None,
+                       "fresh": bool(sample and sample['session_valid'] and self.broker_connected and
+                                     self.monitor_ready and now - sample['received_at'] <= TELEMETRY_TIMEOUT)}
+                for name, sample in self.telemetry.items()
+            }
+            current = telemetry["controller"]
+            vehicle = telemetry["vehicle"]
+            if (current["fresh"] and current["data"]["start_block"] == START_BLOCK_OBSTACLE and
+                    vehicle["fresh"] and vehicle["data"]["faults"] & VEHICLE_FAULT_NO_ECHO):
+                current["data"] = dict(
+                    current["data"],
+                    start_block_label="Ultrasonic echo unavailable",
+                    start_hint="With the car stopped, hold a flat target 30–50 cm straight ahead. "
+                               "If the fault persists, check sensor power, ground, GP6 trigger "
+                               "and the level-shifted GP7 echo.",
+                )
             return {
                 "broker": self.broker, "broker_port": self.broker_port, "root": self.root,
                 "broker_connected": self.broker_connected, "monitor_ready": self.monitor_ready,
@@ -204,14 +225,7 @@ class Dashboard:
                          "wifi": bool(flags & 1), "mqtt": bool(flags & 2),
                          "subscribed": bool(flags & 4), "tx_drop": bool(flags & 8),
                          "rx_drop": bool(flags & 16)},
-                "telemetry": {
-                    name: {"data": sample['data'] if sample else None,
-                           "age": max(0, self.clock() - sample['received_at']) if sample else None,
-                           "time": sample['time'] if sample else None,
-                           "fresh": bool(sample and sample['session_valid'] and self.broker_connected and
-                                         self.monitor_ready and self.clock() - sample['received_at'] <= TELEMETRY_TIMEOUT)}
-                    for name, sample in self.telemetry.items()
-                },
+                "telemetry": telemetry,
                 "motion_history": list(self.motion_history),
                 "last_ack": self.last_ack, "last_command": self.last_command,
                 "events": list(self.events),

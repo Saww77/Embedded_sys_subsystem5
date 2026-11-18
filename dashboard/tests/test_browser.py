@@ -171,6 +171,16 @@ def main():
             assert page.locator("#start").is_disabled() and page.locator("#stop").is_enabled()
             fixture.publish(root + "/ack",b"\x03").wait_for_publish(timeout=5)
             expect(page.locator("#command-feedback")).to_contain_text("Junction / line stop latched")
+            diag[3], diag[4] = 8, 1 | 2 | 8 | 64
+            fixture.publish(root + "/controller", diag).wait_for_publish(timeout=5)
+            expect(page.locator("#start-blocker")).to_have_text("Obstacle interlock active")
+            fixture.publish(root + "/controller", diag).wait_for_publish(timeout=5)
+            fixture.publish(root + "/vehicle", b"\x40").wait_for_publish(timeout=5)
+            expect(page.locator("#start-blocker")).to_have_text("Ultrasonic echo unavailable")
+            expect(page.locator("#start-hint")).to_contain_text("30–50 cm straight ahead")
+            expect(page.locator("#pico-description")).to_have_text("Ultrasonic echo unavailable")
+            assert page.locator("#start").is_disabled() and page.locator("#stop").is_enabled()
+            fixture.publish(root + "/vehicle", b"\x00").wait_for_publish(timeout=5)
             diag[3]=0;diag[4]=1|2|64
             fixture.publish(root + "/controller",diag).wait_for_publish(timeout=5)
             expect(page.locator("#start")).to_be_enabled()

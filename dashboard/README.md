@@ -80,6 +80,8 @@ Set `BUDDY1_MOSQUITTO` or `BUDDY1_BROWSER` if executable paths are not discovera
 
 Replace both the dashboard and Pico firmware with matching current versions. A heartbeat confirms network connectivity, not that the motors and sensors are ready. The Vehicle controller panel reports the actual START blocker. Wait at least five seconds after power-up and start on a straight section, not a crossing. Read the named blocker before resetting faults. If it says diagnostics unavailable, the Pico is running older firmware or the topic root does not match. Send the blocker text and IR/target values for diagnosis; a generic one-byte rejected ACK alone cannot identify the cause.
 
+If the panel shows **Ultrasonic echo unavailable**, keep the car stopped and hold a flat target 30–50 cm straight ahead. The obstacle interlock clears automatically when the sensor gets a valid forward reading beyond 20 cm. If the echo fault stays on, check sensor power, common ground, GP6 trigger, and the voltage-divided GP7 echo. A valid clear-distance reading clears the interlock without creating an obstacle profile.
+
 ## Reset a motor fault
 
 With matching timing/reset firmware, a stopped motor fault enables **Reset fault**. Press it once and wait for the ACK and IDLE state, then press START separately. It never resumes automatically. If a timing fault returns, capture the displayed **Gap / limit** numbers before clearing it. A timing gap over the configured limit still stops the car.

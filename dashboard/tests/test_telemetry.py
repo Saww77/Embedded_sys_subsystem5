@@ -99,6 +99,29 @@ class TelemetryTests(unittest.TestCase):
         packet[0]=2
         with self.assertRaises(ValueError):decode_telemetry('controller',packet)
 
+    def test_obstacle_interlock_distinguishes_live_echo_fault(self):
+        packet = bytearray(31)
+        packet[0], packet[3], packet[4] = 2, 8, 1 | 2 | 8 | 64
+        self.send('status', b'\x07')
+        self.send('controller', packet)
+        self.send('vehicle', b'\x40')
+        state = self.d.snapshot()
+        self.assertFalse(state['start_allowed'])
+        self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],
+                         'Ultrasonic echo unavailable')
+
+        self.now += 3
+        self.send('controller', packet)
+        state = self.d.snapshot()
+        self.assertFalse(state['start_allowed'])
+        self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],
+                         'Obstacle interlock active')
+
+        packet[3], packet[4] = 0, 1 | 2 | 64
+        self.send('vehicle', b'\x00')
+        self.send('controller', packet)
+        self.assertTrue(self.d.snapshot()['start_allowed'])
+
     def test_timing_diagnostics_and_stopped_reset(self):
         packet=bytearray(31);packet[0]=2;packet[1]=5;packet[3]=3;packet[4]=1|2|64;packet[5]=2
         packet[25:29]=(12000).to_bytes(4,'little');packet[29:31]=(15000).to_bytes(2,'little')
