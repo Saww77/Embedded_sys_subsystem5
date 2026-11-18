@@ -54,8 +54,8 @@ fixed.
 | GP3 | | |
 | GP4 | S4 (Buddy 4) | IMU SDA (I2C0) |
 | GP5 | S4 (Buddy 4) | IMU SCL (I2C0) |
-| GP6 | S5 | Ultrasonic trigger |
-| GP7 | S5 | Level-shifted ultrasonic echo |
+| GP6 | S3 (proposed) | Left IR digital output, pending AO/DO selection |
+| GP7 | S3 (proposed) | Right IR digital output, pending AO/DO selection |
 | GP8 | | |
 | GP9 | | |
 | GP10 | | |
@@ -64,8 +64,8 @@ fixed.
 | GP13 | | |
 | GP14 | | |
 | GP15 | | |
-| GP16 | | |
-| GP17 | | |
+| GP16 | S5 | Ultrasonic trigger |
+| GP17 | S5 | Level-shifted ultrasonic echo |
 | GP18 | | |
 | GP19 | *example:* S1 | external LED (LED + 330 Ω to GND) |
 | GP20 | | |
@@ -111,7 +111,7 @@ the drivers have no locking to stop it.
 | SPI0 | | | |
 | SPI1 | | | |
 | ADC | | | GP26–GP28 |
-| PWM slices 3 B and 6 A | Subsystem 5 | `obstacle_scan` | GP7 (echo capture), GP12 (servo) |
+| PWM slices 0 B and 6 A | Subsystem 5 | `obstacle_scan` | GP17 (echo capture), GP12 (servo) |
 | WiFi radio, TCP/IP, MQTT | *kernel* | `cyw43_utk_task` (built in) | GP23–25, GP29 |
 
 ### WiFi and MQTT are special

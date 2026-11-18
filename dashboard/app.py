@@ -205,8 +205,8 @@ class Dashboard:
                     current["data"],
                     start_block_label="Ultrasonic echo unavailable",
                     start_hint="With the car stopped, hold a flat target 30–50 cm straight ahead. "
-                               "If the fault persists, check sensor power, ground, GP6 trigger "
-                               "and the level-shifted GP7 echo.",
+                               "If the fault persists, check sensor power, ground, GP16 trigger "
+                               "and the level-shifted GP17 echo.",
                 )
             return {
                 "broker": self.broker, "broker_port": self.broker_port, "root": self.root,

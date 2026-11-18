@@ -2,7 +2,7 @@
 
 ## Integration
 
-The Pico W scan task owns GP6 (trigger), GP7 (echo through a 5 V to 3.3 V divider), and GP12 (50 Hz servo). The hardware counts echo width on PWM slice 3B while the scan task sleeps. PWM slice 6A controls the servo. This leaves the motor encoder interrupt and motor PWM slices available to Subsystem 2.
+The Pico W scan task owns GP16 (trigger), GP17 (echo through a 5 V to 3.3 V divider), and GP12 (50 Hz servo). The hardware counts echo width on PWM slice 0B while the scan task sleeps. PWM slice 6A controls the servo. This leaves the motor encoder interrupt and motor PWM slices available to Subsystem 2.
 
 The task ranges forward while the vehicle is running. A return at or below 150 mm blocks motion. A valid forward return above 200 mm clears the interlock. A missing or invalid forward echo keeps the interlock engaged and sets the ultrasonic echo fault. A stopped vehicle with zero measured wheel RPM can sweep 30°, 60°, 90°, 120°, and 150°, then rescan around the closest coarse return at 5° increments. Width is estimated from the lateral separation of the first and last clustered returns. Side clearances are the next observed ranges outside that cluster. The controller requires a new START after an obstacle stop in the MQTT build. Autonomous bypass and line reacquisition remain open.
 

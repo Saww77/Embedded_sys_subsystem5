@@ -6,8 +6,8 @@
 #include <bsp/libbsp.h>
 #include <stdint.h>
 
-#define TRIG_PIN 6u
-#define ECHO_PIN 7u
+#define TRIG_PIN 16u
+#define ECHO_PIN 17u
 #define SERVO_PIN 12u
 #define REG32(addr) (*(volatile uint32_t *)(uintptr_t)(addr))
 #define PWM_SLICE(pin) (PWM_BASE + (((pin) >> 1u) & 7u) * 0x14u)
@@ -17,6 +17,10 @@
 #define COUNT_WHILE_B_HIGH (1u << 4)
 #define ECHO_TIMEOUT_US 30000u
 #define MICROS REG32(TIMER_BASE + 0x28u)
+
+_Static_assert((ECHO_PIN & 1u) != 0, "Echo capture requires PWM channel B");
+_Static_assert(PWM_SLICE(ECHO_PIN) != PWM_SLICE(SERVO_PIN),
+               "Echo capture and servo require separate PWM slices");
 
 void s5_hw_init(void)
 {

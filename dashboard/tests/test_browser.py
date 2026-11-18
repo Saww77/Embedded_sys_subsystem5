@@ -178,6 +178,8 @@ def main():
             fixture.publish(root + "/vehicle", b"\x40").wait_for_publish(timeout=5)
             expect(page.locator("#start-blocker")).to_have_text("Ultrasonic echo unavailable")
             expect(page.locator("#start-hint")).to_contain_text("30–50 cm straight ahead")
+            expect(page.locator("#start-hint")).to_contain_text("GP16 trigger")
+            expect(page.locator("#start-hint")).to_contain_text("GP17 echo")
             expect(page.locator("#pico-description")).to_have_text("Ultrasonic echo unavailable")
             assert page.locator("#start").is_disabled() and page.locator("#stop").is_enabled()
             fixture.publish(root + "/vehicle", b"\x00").wait_for_publish(timeout=5)
