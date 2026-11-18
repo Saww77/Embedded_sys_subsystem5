@@ -16,9 +16,9 @@ Encoder pulse inputs follow the updated report. Left uses GP2 and right uses GP3
 
 ## Stationary hardware check
 
-With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It sets the drive outputs low and repeats the GP12 sweep while printing raw readings over USB serial at 115200.
+With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It sets the drive outputs low and repeats the production GP12 sweep and width calculation, printing the commanded angles and raw readings over USB serial at 115200.
 
-Hold a flat target 30–50 cm ahead at the centre position. A working sensor reports about 1,750–2,920 µs and 300–500 mm. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
+For a range check, hold a flat target 30–50 cm ahead when the sensor is at 90°. A working sensor reports about 1,750–2,920 µs and 300–500 mm. For a width check, place a narrow flat-front box 12–15 cm directly ahead with clear space on both sides and wait for a full sweep. A resolved profile prints `width=… mm`. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 

@@ -40,12 +40,42 @@ static void publish_controller(const VEHICLE_SNAPSHOT *s)
     bytes[29]=s->control_gap_limit_us&255;bytes[30]=s->control_gap_limit_us>>8;
     account((ER)mqtt_bridge_send(MQTT_ROUTE_CONTROLLER,bytes,sizeof(bytes)));
 }
+
+static void publish_obstacle(const VEHICLE_SNAPSHOT *s)
+{
+    static BOOL logged, previous_width;
+    static ER previous_result;
+    static uint32_t last_log_at;
+    ER result = s1_publish_obstacle(s->near_mm, s->width_mm, s->clear_left_mm,
+                                   s->clear_right_mm, s->obstacle_angle);
+    account(result);
+    BOOL width = s->width_mm != S5_UNKNOWN_WIDTH;
+    if (logged && width == previous_width && result == previous_result &&
+        s->timestamp_ms - last_log_at < 3000u) return;
+    logged = TRUE;
+    previous_width = width;
+    previous_result = result;
+    last_log_at = s->timestamp_ms;
+    const char *outcome = result == E_OK ? "queued" : "queue rejected";
+    if (width)
+        tm_printf((UB*)"[S1 MQTT] /obstacle %s near=%u mm width=%u mm result=%d\n",
+                  outcome, (unsigned)s->near_mm, (unsigned)s->width_mm, result);
+    else
+        tm_printf((UB*)"[S1 MQTT] /obstacle %s near=%u mm width=unavailable result=%d\n",
+                  outcome, (unsigned)s->near_mm, result);
+}
 #endif
 void s1_publish_telemetry(void)
 {
 #if TM_MQTT
+    static unsigned previous_link = ~0u;
+    unsigned link = s1_connection_status() & 3u;
+    if (link != previous_link) {
+        previous_link = link;
+        tm_printf((UB*)"[S1 MQTT] telemetry link Wi-Fi=%u broker=%u\n", link & 1u, link >> 1u);
+    }
     VEHICLE_SNAPSHOT s;
-    if((s1_connection_status()&3u)!=3u || !vehicle_get_snapshot(&s))return;
+    if(link!=3u || !vehicle_get_snapshot(&s))return;
     unsigned faults=s.motor_faults?S1_FAULT_MOTOR:0;
     if(s.motor_faults&1u)faults|=S1_FAULT_ENCODER;
     if(s.obstacle_no_echo)faults|=S1_FAULT_NO_ECHO;
@@ -64,7 +94,6 @@ void s1_publish_telemetry(void)
         account(s1_publish_terrain(s.height_mm,s.terrain_phase));
     unsigned obstacle_max_age = s.obstacle_profile ? 4000u : S5_RANGE_MAX_AGE_MS;
     if(s.obstacle_valid && (uint32_t)(s.timestamp_ms-s.obstacle_timestamp_ms)<=obstacle_max_age)
-        account(s1_publish_obstacle(s.near_mm,s.width_mm,s.clear_left_mm,
-                                    s.clear_right_mm,s.obstacle_angle));
+        publish_obstacle(&s);
 #endif
 }

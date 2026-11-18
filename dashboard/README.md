@@ -85,6 +85,18 @@ The **Obstacle scan** card shows measured forward distance even when a target is
 
 Connect the scan servo to the Robo Pico servo header marked **GP12**. The firmware commands a short sweep during startup. For a repeating sweep and raw ECHO pulse readings, use the [stationary USB bench build](../testing/subsystem5/TEST_LOG.md#stationary-hardware-check).
 
+## Trace obstacle width from the Pico to the dashboard
+
+Open the normal firmware's USB serial console at 115200 baud. A forward reading at 90° confirms the range sensor produced a sample. While following the line, the stop and sweep start at 150 mm or less, so a 164 mm forward reading by itself does not trigger them. A profile needs returns near both sides of a target with a clear reading beyond each edge.
+
+- `[S5] scan waiting for drive motors to stop` identifies a motion gate. `GP12 sweep start` means the firmware is commanding the servo. Watch the horn to confirm it moves.
+- `[S5] width unavailable` means no numerical width was calculated. The edge flags show which edges the sweep resolved. The bench build prints the commanded angle and echo for each scan point.
+- `[S5] profile ... width=...` confirms width was calculated on the Pico. `[S1 MQTT] /obstacle queued ... width=...` confirms the frame reached the local MQTT queue. Use the dashboard's topic root and subscribe to the broker to verify delivery. The payload is binary.
+
+```sh
+mosquitto_sub -h BROKER_IP -t 'TOPIC_ROOT/obstacle' -F '%t %x'
+```
+
 ## Reset a motor fault
 
 With matching timing/reset firmware, a stopped motor fault enables **Reset fault**. Press it once and wait for the ACK and IDLE state, then press START separately. It never resumes automatically. If a timing fault returns, capture the displayed **Gap / limit** numbers before clearing it. A timing gap over the configured limit still stops the car.
