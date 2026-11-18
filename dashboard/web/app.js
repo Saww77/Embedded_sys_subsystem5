@@ -159,8 +159,8 @@ function drawTelemetry(data) {
     IDLE: "Controller is stopped or waiting for START.",
     FOLLOW_LINE: "Controller is applying line-following recommendations.",
     FAULT: "Controller has stopped on a fault. Inspect the readings before restarting.",
-    TURNING: "A turning mission state was reported.", AVOIDING: "An avoidance mission state was reported.",
-    RECOVER_LINE: "A line-recovery mission state was reported."
+    TURNING: "The vehicle is turning.", AVOIDING: "The vehicle is profiling or passing an obstacle.",
+    RECOVER_LINE: "The vehicle is searching for the line or aligning with it."
   };
   text("mission-description", vehicle ? topics.vehicle.fresh ? descriptions[vehicle.state] : "Last report only. Waiting for live mission telemetry." : "Waiting for a mission-state report.");
   faultList("vehicle-faults", vehicle?.fault_labels ?? [], Boolean(vehicle));
@@ -187,6 +187,10 @@ function drawTelemetry(data) {
     text("obstacle-" + id, obstacle?.[key] == null ? null : obstacle[key] + " mm");
   }
   text("obstacle-angle", obstacle?.angle_deg == null ? null : obstacle.angle_deg + "°");
+  const avoidance = topics.avoidance;
+  const phase = avoidance?.data?.phase_label;
+  text("avoidance-phase", phase && !avoidance.fresh ? phase + " (stale)" : phase);
+  text("avoidance-side", avoidance?.data?.side);
   const history = data?.motion_history ?? [];
   const maximum = Math.max(30, ...history.flatMap(p => [p.left_rpm, p.right_rpm]));
   for (const side of ["left", "right"]) {

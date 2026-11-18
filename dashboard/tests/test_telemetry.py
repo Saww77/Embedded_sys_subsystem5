@@ -77,7 +77,8 @@ class TelemetryTests(unittest.TestCase):
         packets=[('vehicle',b'\x07'),('line',b'\xc0'),('line',b'\x28'),
                  ('terrain',(2001).to_bytes(2,'little')),('terrain',b'\x00\xc0'),
                  ('obstacle',(4001).to_bytes(6,'little')),('obstacle',(1<<47).to_bytes(6,'little')),
-                 ('motion',(1<<67).to_bytes(9,'little')),('motion',(101<<27).to_bytes(9,'little'))]
+                 ('motion',(1<<67).to_bytes(9,'little')),('motion',(101<<27).to_bytes(9,'little')),
+                 ('avoidance',b'\x0e'),('avoidance',b'\x31'),('avoidance',b'\x41')]
         for kind,payload in packets:
             with self.subTest(kind=kind,payload=payload):
                 with self.assertRaises(ValueError):decode_telemetry(kind,payload)
@@ -143,6 +144,6 @@ class TelemetryTests(unittest.TestCase):
         client=SimpleNamespace(subscribe=lambda topics:(result.extend(topics) or (0,1)))
         self.d.on_connect(client,None,None,SimpleNamespace(is_failure=False),None)
         self.assertEqual({topic.rsplit('/',1)[-1] for topic,qos in result},
-                         {'status','ack','motion','line','terrain','obstacle','vehicle','controller'})
+                         {'status','ack','motion','line','terrain','obstacle','vehicle','controller','avoidance'})
 
 if __name__=='__main__':unittest.main()

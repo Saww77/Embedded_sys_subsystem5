@@ -17,32 +17,30 @@ static unsigned read_at(unsigned index)
     return s5_hw_measure_mm();
 }
 
-static void publish_profile(S5_PROFILE profile)
-{
-    vehicle_submit_obstacle_profile(profile.nearest_mm, profile.width_mm,
-                                    profile.left_mm, profile.right_mm,
-                                    profile.angle_deg);
-}
-
-static BOOL scan_obstacle(unsigned centre)
+static BOOL scan_obstacle(void)
 {
     unsigned short samples[S5_SCAN_POINTS];
-    unsigned anchor = CENTRE_INDEX, nearest = centre;
-    for (unsigned i = 0; i < S5_SCAN_POINTS; i += COARSE_INDEX_STEP) {
-        unsigned range = read_at(i);
-        if (range < nearest) {
-            nearest = range;
-            anchor = i;
-        }
+    for (unsigned i = 0; i < S5_SCAN_POINTS; i += COARSE_INDEX_STEP)
+        samples[i] = read_at(i);
+
+    /* Profile the return in the car's path. Nearby objects elsewhere in
+       the coarse sweep still contribute clearance evidence. */
+    unsigned first = CENTRE_INDEX - COARSE_INDEX_STEP;
+    unsigned last = CENTRE_INDEX + COARSE_INDEX_STEP;
+    unsigned coarse = samples[CENTRE_INDEX];
+    if (samples[first] <= coarse + S5_PROFILE_TOLERANCE_MM) first = 0;
+    if (samples[last] <= coarse + S5_PROFILE_TOLERANCE_MM) last = S5_SCAN_POINTS - 1;
+    if (coarse <= S5_CLEAR_MM) {
+        for (unsigned i = first; i <= last; ++i) samples[i] = read_at(i);
     }
-    unsigned first = anchor >= COARSE_INDEX_STEP ? anchor - COARSE_INDEX_STEP : 0;
-    unsigned last = anchor + COARSE_INDEX_STEP;
-    if (last >= S5_SCAN_POINTS) last = S5_SCAN_POINTS - 1;
-    for (unsigned i = first; i <= last; ++i) samples[i] = read_at(i);
-    BOOL found = samples[anchor] <= S5_CLEAR_MM;
-    if (found) publish_profile(s5_profile(samples, first, last, anchor));
+
     s5_hw_angle(S5_CENTRE_ANGLE);
     tk_dly_tsk(SERVO_SETTLE_MS);
+    unsigned fine = samples[CENTRE_INDEX];
+    BOOL found = coarse <= S5_CLEAR_MM && fine <= S5_CLEAR_MM &&
+                 fine <= coarse + S5_PROFILE_TOLERANCE_MM &&
+                 coarse <= fine + S5_PROFILE_TOLERANCE_MM;
+    if (found) vehicle_submit_obstacle_profile(s5_profile(samples, first, last, CENTRE_INDEX), TRUE);
     return found;
 }
 
@@ -53,27 +51,24 @@ static void scan_task(INT stacd, void *exinf)
     s5_hw_init();
     tk_dly_tsk(SERVO_SETTLE_MS);
 
-    BOOL blocked = TRUE;
     BOOL has_profile = FALSE;
     for (;;) {
         unsigned range = s5_hw_measure_mm();
-        BOOL no_echo = range == S5_UNKNOWN_RANGE;
-        blocked = no_echo || range <= (blocked ? S5_CLEAR_MM : S5_STOP_MM);
-        vehicle_update_obstacle_guard(blocked, no_echo);
-        if (!no_echo && blocked) {
+        vehicle_submit_obstacle_range(range);
+        if (range != S5_UNKNOWN_RANGE && vehicle_obstacle_scan_allowed()) {
             if (!has_profile) {
-                publish_profile((S5_PROFILE){
+                vehicle_submit_obstacle_profile((S5_PROFILE){
                     .nearest_mm = range, .width_mm = S5_UNKNOWN_WIDTH,
                     .left_mm = S5_UNKNOWN_RANGE, .right_mm = S5_UNKNOWN_RANGE,
                     .angle_deg = S5_CENTRE_ANGLE
-                });
+                }, FALSE);
                 has_profile = TRUE;
             }
             tk_dly_tsk(PING_INTERVAL_MS);
             S2_STATUS motion;
             if (motion_get_status(&motion) && s2_get_bits(&motion, 0, 2) == 0 &&
-                s2_get_bits(&motion, 9, 9) == 0 && s2_get_bits(&motion, 18, 9) == 0) {
-                has_profile = scan_obstacle(range);
+                s2_get_bits(&motion, 9, 9) <= 2 && s2_get_bits(&motion, 18, 9) <= 2) {
+                has_profile = scan_obstacle();
             }
         } else {
             has_profile = FALSE;
@@ -91,7 +86,7 @@ EXPORT ER subsystem5_init(void)
 EXPORT ER subsystem5_start(void)
 {
 #ifdef CPU_RP2040
-    vehicle_update_obstacle_guard(TRUE, FALSE);
+    vehicle_enable_obstacle_monitor();
     ID task = app_start_task((FP)scan_task, S5_PRI_MAIN, TP_PRC1, "obstacle_scan");
     return task < E_OK ? task : E_OK;
 #else

@@ -28,6 +28,7 @@ static bool execute(uint16_t word)
     case S2_MOVE_B:return s2_core_move_backward_mm(arg);
     case S2_LEFT:return s2_core_turn_left(arg+1);
     case S2_RIGHT:return s2_core_turn_right(arg+1);
+    case S2_MANEUVER:return s2_core_maneuver(arg);
     case S2_CLEAR:return s2_core_clear_faults();
     default:return false;
     }
@@ -83,7 +84,7 @@ EXPORT void motion_control_task(INT stacd,void *exinf)
                can be older than a command enqueued while the owner was blocked. */
             uint32_t received=s2_now_ms();age=(uint32_t)(received-issued);
             bool fresh=age<=S2_COMMAND_TTL_MS;
-            bool starts=(op==S2_FORWARD||op==S2_BACKWARD||op==S2_WHEELS||op==S2_WHEEL_RPM||op==S2_MOVE_F||op==S2_MOVE_B||op==S2_LEFT||op==S2_RIGHT);
+            bool starts=(op==S2_FORWARD||op==S2_BACKWARD||op==S2_WHEELS||op==S2_WHEEL_RPM||op==S2_MOVE_F||op==S2_MOVE_B||op==S2_LEFT||op==S2_RIGHT||op==S2_MANEUVER);
             bool settled=!starts || s2_core_busy() || !settling_active;
             /* Requests during settling are rejected, never silently replayed later. */
             if(!fresh)reason=S2_REPLY_STALE;

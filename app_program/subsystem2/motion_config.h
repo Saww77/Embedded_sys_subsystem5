@@ -7,9 +7,7 @@
 #define RIGHT_IN_A 10u
 #define RIGHT_IN_B 11u
 #define LEFT_ENC_A 2u
-#define LEFT_ENC_B 3u
-#define RIGHT_ENC_A 0u
-#define RIGHT_ENC_B 1u
+#define RIGHT_ENC_A 3u
 /* Check physical direction with wheels raised. Flip the relevant value if needed. */
 #define LEFT_MOTOR_INVERT 0
 #define RIGHT_MOTOR_INVERT 0

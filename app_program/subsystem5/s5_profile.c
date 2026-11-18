@@ -1,7 +1,6 @@
 #include "s5_profile.h"
 
 #define MAX_WIDTH_MM 2000
-#define RANGE_TOLERANCE_MM 100u
 
 static int lateral_mm(unsigned index, unsigned range_mm)
 {
@@ -16,8 +15,8 @@ static int lateral_mm(unsigned index, unsigned range_mm)
 static int same_obstacle(unsigned range, unsigned reference)
 {
     return range != S5_UNKNOWN_RANGE &&
-           range <= reference + RANGE_TOLERANCE_MM &&
-           reference <= range + RANGE_TOLERANCE_MM;
+           range <= reference + S5_PROFILE_TOLERANCE_MM &&
+           reference <= range + S5_PROFILE_TOLERANCE_MM;
 }
 
 S5_PROFILE s5_profile(const unsigned short samples[S5_SCAN_POINTS],
@@ -37,8 +36,14 @@ S5_PROFILE s5_profile(const unsigned short samples[S5_SCAN_POINTS],
         .right_mm = right < last ? samples[right + 1] : S5_UNKNOWN_RANGE
     };
     if (left > first && right < last && left < right) {
-        int width = lateral_mm(right, samples[right]) - lateral_mm(left, samples[left]);
-        if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (unsigned)width;
+        int left_edge = lateral_mm(left, samples[left]);
+        int right_edge = lateral_mm(right, samples[right]);
+        int width = right_edge - left_edge;
+        if (width > 0 && width <= MAX_WIDTH_MM) {
+            result.width_mm = (unsigned)width;
+            result.left_edge_mm = left_edge;
+            result.right_edge_mm = right_edge;
+        }
     }
     return result;
 }

@@ -6,7 +6,16 @@ VEHICLE_FAULT_NO_ECHO = 1 << 3
 START_BLOCK_OBSTACLE = 8
 VEHICLE_FAULTS = ((1, 'Motor'), (2, 'Encoder'), (4, 'IMU'),
                   (VEHICLE_FAULT_NO_ECHO, 'Ultrasonic echo'), (16, 'Wi-Fi'))
-TELEMETRY_TOPICS = ('vehicle', 'motion', 'line', 'terrain', 'obstacle', 'controller')
+TELEMETRY_TOPICS = ('vehicle', 'motion', 'line', 'terrain', 'obstacle', 'controller', 'avoidance')
+AVOIDANCE_PHASES = (
+    'Inactive', 'Profiling obstacle', 'Turning outward', 'Moving off the line',
+    'Aligning alongside the obstacle', 'Passing obstacle', 'Turning toward the line',
+    'Searching for the line', 'Centering on the line', 'Realigning with the track',
+    'Continuing past the obstacle', 'Line reacquired', 'Detour stopped',
+    'Checking the rejoined path',
+)
+AVOIDANCE_SIDES = (None, 'Left', 'Right')
+AVOIDANCE_FAILED = 12
 
 def command_payload(command):
     if command == 'start': return b'\x01'
@@ -16,7 +25,7 @@ def command_payload(command):
 
 def decode_telemetry(kind, payload):
     sizes = dict(vehicle=(1,), motion=(9,), line=(1,), terrain=(2,),
-                 obstacle=(6, 7), controller=(25, 31))
+                 obstacle=(6, 7), controller=(25, 31), avoidance=(1,))
     if len(payload) not in sizes.get(kind, ()):
         raise ValueError('Incorrect binary telemetry length')
     word = int.from_bytes(payload, 'little')
@@ -55,6 +64,11 @@ def decode_telemetry(kind, payload):
                     reset_pending=bool(payload[4]&128),
                     timing_gap_us=int.from_bytes(payload[25:29],'little') if payload[0]>=2 else None,
                     timing_limit_us=int.from_bytes(payload[29:31],'little') if payload[0]>=2 else None)
+    if kind == 'avoidance':
+        phase, side = bits(0, 4), bits(4, 2)
+        if word >> 6 or phase >= len(AVOIDANCE_PHASES) or side >= len(AVOIDANCE_SIDES):
+            raise ValueError('Invalid avoidance payload')
+        return dict(phase=phase, phase_label=AVOIDANCE_PHASES[phase], side=AVOIDANCE_SIDES[side])
     if kind == 'vehicle':
         state, faults = bits(0, 3), bits(3, 5)
         if state >= len(STATES): raise ValueError('Unknown vehicle state')

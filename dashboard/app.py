@@ -20,7 +20,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from mqtt_protocol import (START_BLOCK_OBSTACLE, TELEMETRY_TOPICS, VEHICLE_FAULT_NO_ECHO,
+from mqtt_protocol import (AVOIDANCE_FAILED, START_BLOCK_OBSTACLE, TELEMETRY_TOPICS, VEHICLE_FAULT_NO_ECHO,
                            command_payload, decode_telemetry)
 
 HEARTBEAT_TIMEOUT = 15.0
@@ -171,6 +171,9 @@ class Dashboard:
                 if kind == "vehicle" and (previous is None or previous['data'] != decoded):
                     self.event("vehicle", "Mission: " + decoded['state'] +
                                (" · " + ", ".join(decoded['fault_labels']) if decoded['faults'] else ""))
+                if kind == "avoidance" and decoded['phase'] and (previous is None or previous['data'] != decoded):
+                    side = " · " + decoded['side'] if decoded['side'] else ""
+                    self.event("vehicle", decoded['phase_label'] + side)
                 if kind == "motion":
                     self.motion_history.append(dict(left_rpm=decoded['left_rpm'],
                                                     right_rpm=decoded['right_rpm']))
@@ -199,14 +202,23 @@ class Dashboard:
             }
             current = telemetry["controller"]
             vehicle = telemetry["vehicle"]
-            if (current["fresh"] and current["data"]["start_block"] == START_BLOCK_OBSTACLE and
-                    vehicle["fresh"] and vehicle["data"]["faults"] & VEHICLE_FAULT_NO_ECHO):
+            obstacle_interlock = current["fresh"] and current["data"]["start_block"] == START_BLOCK_OBSTACLE
+            echo_fault = vehicle["fresh"] and vehicle["data"]["faults"] & VEHICLE_FAULT_NO_ECHO
+            if obstacle_interlock and echo_fault:
                 current["data"] = dict(
                     current["data"],
                     start_block_label="Ultrasonic echo unavailable",
                     start_hint="With the car stopped, hold a flat target 30–50 cm straight ahead. "
                                "If the fault persists, check sensor power, ground, GP16 trigger "
-                               "and the level-shifted GP17 echo.",
+                               "and the 3.3 V signal at GP17 echo.",
+                )
+            avoidance = telemetry["avoidance"]
+            if (obstacle_interlock and not echo_fault and avoidance["fresh"] and
+                    avoidance["data"]["phase"] == AVOIDANCE_FAILED):
+                current["data"] = dict(
+                    current["data"],
+                    start_block_label="Detour stopped",
+                    start_hint="Place the car back on the line and confirm the path is clear before pressing START.",
                 )
             return {
                 "broker": self.broker, "broker_port": self.broker_port, "root": self.root,

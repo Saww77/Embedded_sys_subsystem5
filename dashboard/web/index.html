@@ -82,11 +82,12 @@
       <section class="card telemetry-card" id="obstacle-card">
         <div class="section-top"><h2>Obstacle scan</h2><span class="sample-status" id="obstacle-freshness">No data</span></div>
         <div class="obstacle-grid"><div><span class="field-label">NEAREST</span><strong id="obstacle-nearest">—</strong></div><div><span class="field-label">WIDTH</span><strong id="obstacle-width">—</strong></div><div><span class="field-label">LEFT CLEARANCE</span><strong id="obstacle-left">—</strong></div><div><span class="field-label">RIGHT CLEARANCE</span><strong id="obstacle-right">—</strong></div><div><span class="field-label">SCAN ANGLE</span><strong id="obstacle-angle">—</strong></div></div>
+        <div class="mode-row"><span>Detour <strong id="avoidance-phase">—</strong></span><span>Side <strong id="avoidance-side">—</strong></span></div>
         <p class="metric-note">90° is straight ahead. Width and side clearance appear when the scan can measure them.</p>
       </section>
       <section class="card event-card"><div class="section-top"><h2>Connection &amp; mission events</h2><span class="tiny-label">LATEST 40</span></div><ol id="events" class="events"><li>Waiting for events.</li></ol></section>
     </div>
-    <p class="page-note">Heartbeat confirms connection, mission state reports controller intent, and wheel RPM reports measured motion. Junction-stop behaviour remains enabled; barcode turns and obstacle bypass are not implemented in the current firmware.</p>
+    <p class="page-note">Heartbeat confirms connection, mission state reports controller intent, and wheel RPM reports measured motion. Junction-stop behaviour remains enabled. Barcode turns are disabled.</p>
   </main>
 </body>
 </html>

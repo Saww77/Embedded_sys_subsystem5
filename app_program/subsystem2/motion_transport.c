@@ -3,6 +3,7 @@
 
 
 _Static_assert(S2_QUEUE_LENGTH==8,"Queue index bit widths assume length 8");
+_Static_assert(MAX_DISTANCE_MM < S2_MANEUVER_TURN, "Maneuver distance must fit in 11 bits");
 static ID transport_lock;
 /* Native micro T-Kernel task-context mutex with priority inheritance.
  * Never call any transport API from an interrupt. Initialise ONCE at startup. */
@@ -70,6 +71,14 @@ bool motion_move_backward_mm(unsigned n){return n<=MAX_DISTANCE_MM && (n?submit(
 bool motion_turn_left(unsigned n){return n>=1&&n<=8&&submit(S2_LEFT,n-1);}
 bool motion_turn_right(unsigned n){return n>=1&&n<=8&&submit(S2_RIGHT,n-1);}
 bool motion_clear_faults(void){return submit(S2_CLEAR,0);}
+bool motion_maneuver(unsigned distance_mm, bool right, uint16_t *command)
+{
+    if (!command || distance_mm > MAX_DISTANCE_MM) return false;
+    unsigned arg = distance_mm ? distance_mm : S2_MANEUVER_TURN | (unsigned)right;
+    if (!submit(S2_MANEUVER, arg)) return false;
+    *command = (uint16_t)(S2_MANEUVER | (arg << 4));
+    return true;
+}
 bool motion_get_status(S2_STATUS *out)
 {
     if(!transport_lock||!out)return false;

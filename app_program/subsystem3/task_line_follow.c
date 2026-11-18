@@ -260,7 +260,8 @@ EXPORT void line_follow_task(INT stacd, void *exinf)
 
         //COMMENT
         /* TEST: junction check without the barcode guard */
-        if (!halted && vehicle_is_following() && l >= JUNC_DARK && r >= JUNC_DARK) { junc_ms += LINE_PERIOD_MS; }
+        VC_STATE vehicle = vehicle_state();
+        if (!halted && vehicle == VC_FOLLOW_LINE && l >= JUNC_DARK && r >= JUNC_DARK) { junc_ms += LINE_PERIOD_MS; }
         else { junc_ms = 0; on_junction = FALSE; }
 
 
@@ -302,6 +303,7 @@ EXPORT void line_follow_task(INT stacd, void *exinf)
         }
 
 
+        if (vehicle == VC_AVOIDING || vehicle == VC_RECOVER_LINE) st = (LF_STATE){0};
         line_decide(l, c, r, &st, &cmd);
         if (halted) { cmd = (LF_CMD){0, 0, TRUE}; }
         vehicle_submit_line(l, c, r, cmd.left, cmd.right, cmd.stop, 0);

@@ -18,6 +18,8 @@ bool s2_core_move_backward_mm(unsigned mm);
 /* steps 1..8 means 45..360 degrees. No angle field is retained after conversion. */
 bool s2_core_turn_left(unsigned steps);
 bool s2_core_turn_right(unsigned steps);
+bool s2_core_maneuver(unsigned arg);
+bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status);
 void s2_core_stop(void);
 bool s2_core_busy(void);
 unsigned s2_core_faults(void);

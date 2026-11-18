@@ -71,8 +71,8 @@ ER s2_hw_encoder_init(void)
 #if TK_SUPPORT_SMP
     if(tk_get_prc()!=2)return E_PAR;
 #endif
-    const unsigned pins[]={LEFT_ENC_A,LEFT_ENC_B,RIGHT_ENC_A,RIGHT_ENC_B};
-    for(unsigned i=0;i<4;i++){
+    const unsigned pins[]={LEFT_ENC_A,RIGHT_ENC_A};
+    for(unsigned i=0;i<sizeof(pins)/sizeof(pins[0]);i++){
         gpio_set_pin(pins[i],GPIO_MODE_IN);
         REG32(GPIO(pins[i]))=(REG32(GPIO(pins[i]))&~GPIO_PDE)|GPIO_PUE;
     }

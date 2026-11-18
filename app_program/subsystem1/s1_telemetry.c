@@ -52,6 +52,8 @@ void s1_publish_telemetry(void)
     if(s.reason==VC_REASON_LINK)faults|=S1_FAULT_WIFI;
     account(s1_publish_vehicle(s.state,faults));
     publish_controller(&s);
+    unsigned char avoidance = (unsigned char)(s.avoidance_phase | (s.avoidance_side << 4));
+    account((ER)mqtt_bridge_send(MQTT_ROUTE_AVOIDANCE, &avoidance, sizeof(avoidance)));
     /* No fabricated zero measurements during startup or absent subsystems. */
     if(motion_ready())account(s1_publish_motion());
     if(s.line_valid && (uint32_t)(s.timestamp_ms-s.line_timestamp_ms)<=VC_LINE_MAX_AGE_MS){

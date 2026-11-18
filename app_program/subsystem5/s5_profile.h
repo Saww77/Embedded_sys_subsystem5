@@ -8,6 +8,7 @@
 #define S5_SCAN_POINTS 25u
 #define S5_UNKNOWN_RANGE 4095u
 #define S5_UNKNOWN_WIDTH 2047u
+#define S5_PROFILE_TOLERANCE_MM 100u
 #define S5_STOP_MM 150u
 #define S5_CLEAR_MM 200u
 
@@ -17,6 +18,8 @@ typedef struct {
     unsigned left_mm : 12;
     unsigned right_mm : 12;
     unsigned angle_deg : 7;
+    signed left_edge_mm : 13;
+    signed right_edge_mm : 13;
 } S5_PROFILE;
 
 /* Index zero is 30 degrees, increasing to the right in 5-degree increments. */

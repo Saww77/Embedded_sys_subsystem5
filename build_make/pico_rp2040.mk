@@ -127,12 +127,6 @@ ifeq ($(CONSOLE)$(CRASH_REPORT),usb_cdc1)
 CRASH_SUFFIX := _crash
 endif
 
-ifeq ($(BUDDY1_DEMO),1)
-ifneq ($(CRASH_REPORT),0)
-$(error Buddy 2 uses GP0/GP1 encoders; use CONSOLE=usb_cdc CRASH_REPORT=0)
-endif
-endif
-
 #
 # Images are named after the profile they were built with.  Every image is
 # flashed by hand from a downloads folder, so identically-named artifacts are

@@ -160,6 +160,11 @@ def main():
             expect(page.locator("#obstacle-left")).to_have_text("—")
             expect(page.locator("#obstacle-right")).to_have_text("300 mm")
             expect(page.locator("#obstacle-angle")).to_have_text("85°")
+            fixture.publish(root + "/avoidance", b"\x27").wait_for_publish(timeout=5)
+            expect(page.locator("#avoidance-phase")).to_have_text("Searching for the line")
+            expect(page.locator("#avoidance-side")).to_have_text("Right")
+            fixture.publish(root + "/avoidance", b"\x2b").wait_for_publish(timeout=5)
+            expect(page.locator("#avoidance-phase")).to_have_text("Line reacquired")
             assert page.locator("#left-rpm-path").get_attribute("d")
             print("PASS end-to-end telemetry: all five binary topics decoded over real broker, HTTP and browser")
             # Specific START rejection is surfaced without bypassing Pico guards.

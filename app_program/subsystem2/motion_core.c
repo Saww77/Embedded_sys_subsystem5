@@ -1,6 +1,9 @@
 #include "motion_core.h"
 #include "motion_config.h"
 #include "motion_hw.h"
+#include "motion_transport.h"
+
+#define MANEUVER_RPM 36u
 
 enum { IDLE, VELOCITY, DISTANCE, TURN };
 enum { FAULT_COUNTS=1, FAULT_TIMING=2, FAULT_STALL=4, FAULT_TIMEOUT=8 };
@@ -107,16 +110,16 @@ void s2_core_init(void)
     s2_core_stop();
     encoder_word=0;
     if(s2_hw_encoder_init()<E_OK) state.faults |= FAULT_COUNTS;
-    /* x1 A-rising counting; B inputs reserved, not quadrature direction decoding. */
+    /* Count one rising edge per encoder pulse. */
     last_tick=s2_hw_time_us();
 }
-static bool start(unsigned mode, bool lr, bool rr, unsigned lt, unsigned rt)
+static bool start(unsigned mode, bool lr, bool rr, unsigned lt, unsigned rt, unsigned rpm)
 {
-    if(state.faults || s2_core_busy() || !state.level || lt>8191 || rt>8191) return false;
+    if(state.faults || s2_core_busy() || !rpm || lt>8191 || rt>8191) return false;
     /* Stop -> 200 ms settle -> service -> new command. Caller must provide settling. */
     drain_encoder();
     state.mode=mode; state.left_reverse=lr; state.right_reverse=rr;
-    state.left_rpm=state.right_rpm=state.level*MAX_RPM/4u;
+    state.left_rpm=state.right_rpm=rpm;
     for(unsigned i=0;i<2;i++) {
         wheels[i].integral=0; wheels[i].previous_error=0;
         wheels[i].target=0; wheels[i].progress=0; wheels[i].duty=0;
@@ -137,8 +140,8 @@ bool s2_core_set_speed(unsigned level)
 }
 bool s2_core_increase_speed(void) { return s2_core_set_speed(state.level<4?state.level+1:4); }
 bool s2_core_decrease_speed(void) { return s2_core_set_speed(state.level?state.level-1:0); }
-bool s2_core_forward(void) { return start(VELOCITY,false,false,0,0); }
-bool s2_core_backward(void) { return start(VELOCITY,true,true,0,0); }
+bool s2_core_forward(void) { return start(VELOCITY,false,false,0,0,state.level*MAX_RPM/4u); }
+bool s2_core_backward(void) { return start(VELOCITY,true,true,0,0,state.level*MAX_RPM/4u); }
 bool s2_core_set_wheel_levels(unsigned left,unsigned right)
 {
     if(left>4 || right>4) return false;
@@ -153,7 +156,7 @@ bool s2_core_set_wheel_rpm(unsigned left,unsigned right)
     if(state.mode==IDLE) {
         unsigned selected=state.level;
         if(!selected) state.level=1; /* Independent wheel requests do not need a global speed. */
-        bool accepted=start(VELOCITY,false,false,0,0);
+        bool accepted=start(VELOCITY,false,false,0,0,state.level*MAX_RPM/4u);
         state.level=selected;
         if(!accepted) return false;
     }
@@ -172,24 +175,40 @@ static bool move_mm(unsigned mm,bool reverse)
 {
     if(mm>MAX_DISTANCE_MM) return false;
     if(!mm) return !state.faults;
-    return start(DISTANCE,reverse,reverse,distance_counts(mm,0),distance_counts(mm,1));
+    return start(DISTANCE,reverse,reverse,distance_counts(mm,0),distance_counts(mm,1),state.level*MAX_RPM/4u);
 }
 bool s2_core_move_forward_mm(unsigned mm) { return move_mm(mm,false); }
 bool s2_core_move_backward_mm(unsigned mm) { return move_mm(mm,true); }
-static bool turn(unsigned steps,bool right)
+static unsigned turn_counts(unsigned steps, unsigned wheel)
 {
-    if(steps<1 || steps>8) return false;
-    unsigned target[2];
-    for(unsigned i=0;i<2;i++) {
-        uint64_t numerator=(uint64_t)EFFECTIVE_TRACK_MM*steps*45u*cpr(i);
-        uint32_t denominator=360u*WHEEL_DIAMETER_MM*10u;
-        target[i]=(unsigned)((numerator+denominator/2)/denominator);
-    }
-    if(!start(TURN,!right,right,target[0],target[1])) return false;
-    return true;
+    uint64_t numerator=(uint64_t)EFFECTIVE_TRACK_MM*steps*45u*cpr(wheel);
+    uint32_t denominator=360u*WHEEL_DIAMETER_MM*10u;
+    return (unsigned)((numerator+denominator/2)/denominator);
 }
-bool s2_core_turn_left(unsigned steps) { return turn(steps,false); }
-bool s2_core_turn_right(unsigned steps) { return turn(steps,true); }
+static bool turn(unsigned steps,bool right,unsigned rpm)
+{
+    return steps >= 1 && steps <= 8 &&
+           start(TURN,!right,right,turn_counts(steps,0),turn_counts(steps,1),rpm);
+}
+bool s2_core_turn_left(unsigned steps) { return turn(steps,false,state.level*MAX_RPM/4u); }
+bool s2_core_turn_right(unsigned steps) { return turn(steps,true,state.level*MAX_RPM/4u); }
+
+bool s2_core_maneuver(unsigned arg)
+{
+    if (arg == S2_MANEUVER_TURN || arg == (S2_MANEUVER_TURN | 1u))
+        return turn(2u, (arg & 1u) != 0, MANEUVER_RPM);
+    return arg && arg <= MAX_DISTANCE_MM &&
+           start(DISTANCE,false,false,distance_counts(arg,0),distance_counts(arg,1),MANEUVER_RPM);
+}
+
+bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status)
+{
+    bool pivot = (arg & S2_MANEUVER_TURN) != 0;
+    unsigned left = pivot ? turn_counts(2,0) : distance_counts(arg,0);
+    unsigned right = pivot ? turn_counts(2,1) : distance_counts(arg,1);
+    return s2_get_bits(status,0,2) == IDLE && s2_get_bits(status,5,4) == 0 &&
+           s2_get_bits(status,41,13) >= left && s2_get_bits(status,54,13) >= right;
+}
 bool s2_core_busy(void) { return state.mode!=IDLE; }
 unsigned s2_core_faults(void) { return state.faults; }
 bool s2_core_clear_faults(void)

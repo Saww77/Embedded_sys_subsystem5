@@ -50,8 +50,8 @@ fixed.
 | GP23, GP24, GP25, GP29 | *reserved* | Pico W radio |
 | GP0 | | (taken whenever the team builds with `CRASH_REPORT=1`) |
 | GP1 | | (taken whenever the team builds with `CRASH_REPORT=1`) |
-| GP2 | | |
-| GP3 | | |
+| GP2 | S2 | Left encoder pulse input |
+| GP3 | S2 | Right encoder pulse input |
 | GP4 | S4 (Buddy 4) | IMU SDA (I2C0) |
 | GP5 | S4 (Buddy 4) | IMU SCL (I2C0) |
 | GP6 | S3 (proposed) | Left IR digital output, pending AO/DO selection |

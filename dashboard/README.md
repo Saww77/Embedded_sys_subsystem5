@@ -24,7 +24,7 @@ The Pico must run the MQTT firmware (`make NET=lwip MQTT=1`), not the normal non
 - **Wheels/motion:** measured left/right RPM; propulsion PWM; actual motor mode; global speed level; recent 120-sample RPM trend; raw motor-fault labels; bounded-move progress counts.
 - **Line/barcode:** left/right black-detection flags, centre flag, reported barcode letter.
 - **Terrain:** reported height in millimetres and terrain phase.
-- **Obstacle:** nearest distance, estimated width, left/right clearance in millimetres, and angle of the closest return.
+- **Obstacle:** nearest distance, estimated width and side clearance, angle of the closest return, and the live detour stage and chosen side.
 - **Connection:** live heartbeat age, Wi-Fi/broker/subscription flags and bridge drop flags.
 - **Commands/events:** exact binary START/STOP, Pico acknowledgment and a bounded connection/mission/fault event list.
 
@@ -38,7 +38,7 @@ Each telemetry channel independently expires after 2 seconds without a valid liv
 
 Heartbeat expires after 15 seconds. START is available only when the broker/subscriptions and a fresh heartbeat confirm all connection flags. The Pico may still reject START due to startup delay, stale line data, a junction stop or fault. STOP stays available while the local server has a broker connection. No command is retained; the server does not replay commands after reconnect.
 
-The Pico ACK confirms acceptance for processing, not physical movement. Inspect mission state, wheel RPM and faults after commanding START. The first-junction halt remains intentional; barcode turns, obstacle bypass and complete-track navigation remain unimplemented in the current Pico firmware.
+The Pico ACK confirms acceptance for processing, not physical movement. Inspect mission state, wheel RPM and faults after commanding START. The car can bypass a profiled obstacle during an active run and resume after reacquiring the line. The first-junction halt is still enabled.
 
 MQTT QoS 0 does not guarantee delivery. The browser reports uncertainty if its HTTP request times out. Faults need investigation before a new START. This is a local dashboard with Host/Origin and command-token checks, bound to loopback; it is not designed for public Internet exposure. Broker TLS/auth configuration is not added by this dashboard or the current Pico MQTT client.
 
@@ -55,6 +55,7 @@ Subscriptions use the configured root and these suffixes:
 | `motion` |9| S2_STATUS packed bits: mode0:2, level2:3, faults5:4, L RPM9:9, R RPM18:9, L PWM27:7, R PWM34:7, L progress41:13, R progress54:13 |
 | `line` |1| L/C/R black bits0/1/2, barcode bits3..5 |
 | `terrain` |2| height0:11, phase11:3 |
+| `avoidance` |1| phase at bits 0:4, side at 4:2 (0 none, 1 left, 2 right), upper two bits zero |
 | `obstacle` |6 / 7| nearest0:12, width12:11, left23:12, right35:12. Seven-byte packets add angle minus 30° at 47:7. Width 2047 and clearance 4095 mean unavailable in seven-byte packets. |
 
 Bit numbering starts at the least significant bit of byte0. Fields use the firmware's little-endian packing. `offset:width` notation is used above. `mqtt_protocol.py` validates lengths, ranges and unused bits before displaying telemetry. START publishes `0x01`, STOP `0x00`, and stopped-only RESET `0x02` to `/command`, QoS0, non-retained. Strings such as `START` are not valid Pico commands.
@@ -80,7 +81,7 @@ Set `BUDDY1_MOSQUITTO` or `BUDDY1_BROWSER` if executable paths are not discovera
 
 Replace both the dashboard and Pico firmware with matching current versions. A heartbeat confirms network connectivity, not that the motors and sensors are ready. The Vehicle controller panel reports the actual START blocker. Wait at least five seconds after power-up and start on a straight section, not a crossing. Read the named blocker before resetting faults. If it says diagnostics unavailable, the Pico is running older firmware or the topic root does not match. Send the blocker text and IR/target values for diagnosis; a generic one-byte rejected ACK alone cannot identify the cause.
 
-If the panel shows **Ultrasonic echo unavailable**, keep the car stopped and hold a flat target 30–50 cm straight ahead. The obstacle interlock clears automatically when the sensor gets a valid forward reading beyond 20 cm. If the echo fault stays on, check sensor power, common ground, GP16 trigger, and the voltage-divided GP17 echo. The scan servo signal uses GP12. A valid clear-distance reading clears the interlock without creating an obstacle profile.
+If the panel shows **Ultrasonic echo unavailable**, keep the car stopped and hold a flat target 30–50 cm straight ahead. The obstacle interlock clears automatically when the sensor gets a valid forward reading beyond 20 cm. If the echo fault stays on, check sensor power, common ground, GP16 trigger, and a 3.3 V ECHO signal at GP17. Use a divider for a 5 V ECHO output. The scan servo signal uses GP12. A valid clear-distance reading clears the interlock without creating an obstacle profile.
 
 ## Reset a motor fault
 
