@@ -317,7 +317,8 @@ EXPORT void subsystem5_bench(void)
        verify before trusting the bearings in the scan log. */
     const unsigned check_angles[] = {S5_MIN_ANGLE, S5_MAX_ANGLE, S5_CENTRE_ANGLE};
     for (unsigned i = 0; i < sizeof(check_angles) / sizeof(check_angles[0]); ++i) {
-        tm_printf((UB*)"[S5 BENCH] Servo check: watch sensor turn to %u deg.\n", check_angles[i]);
+        tm_printf((UB*)"[S5 BENCH] Servo check: watch sensor turn to %u deg (PWM %u us).\n",
+                  check_angles[i], s5_servo_pulse_us(check_angles[i]));
         aim(check_angles[i]);
         tk_dly_tsk(1000);
     }

@@ -23,7 +23,6 @@
 #define MICROS REG32(TIMER_TIMERAWL)
 #define STARTUP_POLLS 32768u
 #define TRIGGER_POLLS 4096u
-#define SERVO_OFFSET_US(angle) (((angle) * 1000u + 90u) / 180u)
 
 static uintptr_t echo_irq_base;
 static bool pwm_ready;
@@ -101,10 +100,28 @@ bool s5_hw_init(void)
     return s5_hw_init_ranging();
 }
 
+unsigned s5_servo_pulse_us(unsigned angle)
+{
+    _Static_assert(S5_SERVO_RIGHT_US < S5_SERVO_CENTRE_US &&
+                   S5_SERVO_CENTRE_US < S5_SERVO_LEFT_US,
+                   "Servo pulses must increase from right through centre to left");
+    if (angle <= S5_MIN_ANGLE) return S5_SERVO_RIGHT_US;
+    if (angle >= S5_MAX_ANGLE) return S5_SERVO_LEFT_US;
+
+    const unsigned half_sweep = S5_MAX_ANGLE - S5_CENTRE_ANGLE;
+    if (angle <= S5_CENTRE_ANGLE)
+        return S5_SERVO_CENTRE_US -
+               ((S5_CENTRE_ANGLE - angle) * (S5_SERVO_CENTRE_US - S5_SERVO_RIGHT_US) +
+                half_sweep / 2u) / half_sweep;
+    return S5_SERVO_CENTRE_US +
+           ((angle - S5_CENTRE_ANGLE) * (S5_SERVO_LEFT_US - S5_SERVO_CENTRE_US) +
+            half_sweep / 2u) / half_sweep;
+}
+
 void s5_hw_angle(unsigned angle)
 {
     if (pwm_ready)
-        pwm_set_cc(S5_SERVO_PIN, S5_SERVO_CENTRE_US + SERVO_OFFSET_US(angle) - 500u);
+        pwm_set_cc(S5_SERVO_PIN, s5_servo_pulse_us(angle));
 }
 
 S5_PING s5_hw_ping(void)
