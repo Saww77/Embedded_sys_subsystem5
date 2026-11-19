@@ -3,10 +3,18 @@ const el = (id) => document.getElementById(id);
 let state = null;
 let commandBusy = false;
 let resetBusy = false;
+let resetTimer = null;
 let commandQueue = Promise.resolve();
 let polling = false;
 let lastAckTime = "";
 let commandPosting = false;
+function finishReset() {
+  clearTimeout(resetTimer);
+  resetTimer = null;
+  resetBusy = false;
+  el("reset").disabled = !state?.reset_allowed;
+  el("start").disabled = !state?.start_allowed || commandBusy;
+}
 function setFlag(id, value, fresh) {
   const node = el(id);
   node.className = "flag" + (fresh ? value ? " good" : " bad" : "");
@@ -18,7 +26,7 @@ function draw(data) {
   el("broker-address").textContent = `${data.broker}:${data.broker_port}`;
   el("topic-root").textContent = data.root;
   el("live-monitor").classList.toggle("online", data.broker_connected);
-  el("start").disabled = !data.start_allowed || commandBusy;
+  el("start").disabled = !data.start_allowed || commandBusy || resetBusy;
   el("stop").disabled = !data.stop_allowed;
   el("reset").disabled = !data.reset_allowed || resetBusy;
   el("ready-dot").classList.toggle("online", data.start_allowed);
@@ -55,12 +63,23 @@ function draw(data) {
   if (data.last_ack && data.last_ack.time !== lastAckTime && !commandPosting) {
     const ack = data.last_ack;
     lastAckTime = ack.time;
+    if (ack.command === "reset" && (ack.complete || ack.rejected)) finishReset();
     el("command-feedback").className = "command-feedback" + (ack.rejected ? " error" : "");
-    el("command-feedback").textContent = `Pico ACK: ${ack.command.toUpperCase()} ${ack.rejected ? "rejected" : "accepted for processing"}.`;
+    if (ack.complete) {
+      el("command-feedback").textContent = ack.rejected
+        ? "Reset failed. Check whether the wheels have stopped and inspect the motor fault."
+        : "Reset complete. Check the track and press Start when ready.";
+    } else {
+      el("command-feedback").textContent = `Pico ACK: ${ack.command.toUpperCase()} ${ack.rejected ? "rejected" : "accepted for processing"}.`;
+    }
   }
   if (data.last_ack?.rejected && !commandPosting && el("command-feedback").textContent.startsWith("Pico ACK:")) {
     const diagnostics = data.telemetry?.controller;
-    const reason = data.last_ack.command === "start" && diagnostics?.fresh && diagnostics.data.last_start_reject ? `${diagnostics.data.last_reject_label}. ${diagnostics.data.last_reject_hint}` : "Reason unavailable: update the Pico firmware and inspect controller diagnostics.";
+    const reason = data.last_ack.command === "reset"
+      ? "Wait for the motors to stop and for the controller to report Idle or Fault."
+      : data.last_ack.command === "start" && diagnostics?.fresh && diagnostics.data.last_start_reject
+        ? `${diagnostics.data.last_reject_label}. ${diagnostics.data.last_reject_hint}`
+        : "Reason unavailable: inspect controller diagnostics.";
     el("command-feedback").textContent = `Pico ACK: ${data.last_ack.command.toUpperCase()} rejected — ${reason}`;
   }
 }
@@ -89,8 +108,12 @@ async function refresh() {
   }
 }
 function send(command) {
-  if (!state || (command === "start" && commandBusy) || (command === "reset" && resetBusy)) return;
-  if (command === "reset") { resetBusy = true; el("reset").disabled = true; }
+  if (!state || (command === "start" && (commandBusy || resetBusy)) || (command === "reset" && resetBusy)) return;
+  if (command === "stop" && resetBusy) finishReset();
+  if (command === "reset") {
+    resetBusy = true;
+    el("reset").disabled = el("start").disabled = true;
+  }
   if (command === "start") { commandBusy = true; el("start").disabled = true; }
   // Preserve operator click order, including STOP clicked while START is posting.
   commandQueue = commandQueue.then(() => performSend(command));
@@ -108,13 +131,20 @@ async function performSend(command) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Command was not accepted");
     el("command-feedback").textContent = `${command.toUpperCase()} queued for the broker. Waiting for a Pico acknowledgment.`;
+    if (command === "reset") {
+      resetTimer = setTimeout(() => {
+        finishReset();
+        el("command-feedback").className = "command-feedback error";
+        el("command-feedback").textContent = "Reset result unavailable. Check the controller diagnostics before retrying.";
+      }, 6000);
+    }
   } catch (error) {
+    if (command === "reset") finishReset();
     el("command-feedback").className = "command-feedback error";
     el("command-feedback").textContent = error.name === "TimeoutError" ? "Delivery is uncertain. Check the ACK and USB serial before retrying." : error.message;
   } finally {
     commandPosting = false;
     if (command === "start") commandBusy = false;
-    if (command === "reset") resetBusy = false;
     await refresh();
   }
 }

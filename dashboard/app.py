@@ -142,14 +142,17 @@ class Dashboard:
                     self.heartbeat_time = self.timestamp()
                     self.event("heartbeat", "Live heartbeat " + payload.hex().upper())
             elif message.topic == self.root + "/ack":
-                if len(payload) != 1 or payload[0] not in (0,1,2,3,4,6) or message.retain:
+                if len(payload) != 1 or payload[0] not in (0, 1, 2, 3, 4, 6, 12, 14) or message.retain:
                     self.event("error", "Ignored malformed or retained acknowledgment")
                     return
                 self.last_ack = {"command": "reset" if payload[0] & 4 else "start" if payload[0] & 1 else "stop",
-                                 "rejected": bool(payload[0] & 2), "time": self.timestamp(),
+                                 "rejected": bool(payload[0] & 2), "complete": bool(payload[0] & 8),
+                                 "time": self.timestamp(),
                                  "hex": payload.hex().upper()}
                 label = self.last_ack["command"].upper()
                 result = "rejected" if self.last_ack["rejected"] else "accepted"
+                if self.last_ack["complete"]:
+                    result = "failed" if self.last_ack["rejected"] else "complete"
                 self.event("ack", "Pico ACK: " + label + " " + result)
             else:
                 prefix = self.root + "/"
@@ -218,20 +221,19 @@ class Dashboard:
                 current["data"] = dict(
                     current["data"],
                     start_block_label="Detour stopped",
-                    start_hint="Place the car back on the line and confirm the path is clear before pressing START.",
+                    start_hint="Place the car back on the line, press Reset, and confirm the path is clear before pressing START.",
                 )
             return {
                 "broker": self.broker, "broker_port": self.broker_port, "root": self.root,
                 "broker_connected": self.broker_connected, "monitor_ready": self.monitor_ready,
                 "error": self.error, "start_allowed": bool(ready),
                 "stop_allowed": self.broker_connected,
-                "reset_allowed": bool(controller_live and fresh and flags & 7 == 7 and
-                                      controller['data']['reset_supported'] and
-                                      controller['data']['motor_faults'] and not controller['data']['reset_pending'] and
-                                      controller['data']['state'] in ('IDLE','FAULT') and
-                                      self.telemetry['motion'] and self.telemetry['motion']['session_valid'] and
-                                      self.clock()-self.telemetry['motion']['received_at']<=TELEMETRY_TIMEOUT and
-                                      self.telemetry['motion']['data']['mode']==0),
+                "reset_allowed": bool(current["fresh"] and fresh and flags & 7 == 7 and
+                                      current["data"]["reset_supported"] and
+                                      not current["data"]["reset_pending"] and
+                                      not current["data"]["start_pending"] and
+                                      current["data"]["state"] in ("IDLE", "FAULT") and
+                                      telemetry["motion"]["fresh"] and telemetry["motion"]["data"]["mode"] == 0),
                 "pico": {"fresh": fresh, "age": age, "time": self.heartbeat_time,
                          "hex": None if self.last_status is None else f"{flags:02X}",
                          "wifi": bool(flags & 1), "mqtt": bool(flags & 2),
@@ -256,7 +258,7 @@ class Dashboard:
                     raise CommandUnavailable(f"{diagnostics['start_block_label']}. {diagnostics['start_hint']}")
                 raise CommandUnavailable("Wait for a live Pico heartbeat with all connection flags ready.")
             if command == "reset" and not state["reset_allowed"]:
-                raise CommandUnavailable("Reset requires fresh stopped-motor diagnostics and a latched motor fault.")
+                raise CommandUnavailable("Reset requires a live Pico and stopped motors. Press Stop and wait for the controller to report Idle or Fault.")
             result = self.client.publish(self.root + "/command", payload, qos=0, retain=False)
             if result.rc != 0:
                 raise CommandUnavailable("MQTT did not queue the command; check the broker connection.")

@@ -148,6 +148,25 @@ class TelemetryTests(unittest.TestCase):
         self.send('ack',b'\x04');self.assertEqual(self.d.snapshot()['last_ack']['command'],'reset')
         self.send('ack',b'\x06');self.assertTrue(self.d.snapshot()['last_ack']['rejected'])
 
+    def test_stopped_detour_without_motor_fault_can_reset(self):
+        packet = bytearray(31)
+        packet[0:5] = bytes((2, 5, 6, 8, 1 | 2 | 64))
+        self.send('status', b'\x07')
+        self.send('controller', packet)
+        self.send('avoidance', b'\x1c')
+        self.send('motion', motion_packet())
+        self.assertFalse(self.d.snapshot()['reset_allowed'])
+        stopped = bytearray(motion_packet())
+        stopped[0] &= ~3
+        self.send('motion', stopped)
+        self.assertTrue(self.d.snapshot()['reset_allowed'])
+        self.assertFalse(self.d.snapshot()['start_allowed'])
+        self.send('ack', b'\x0c')
+        self.assertTrue(self.d.snapshot()['last_ack']['complete'])
+        self.assertFalse(self.d.snapshot()['last_ack']['rejected'])
+        self.send('ack', b'\x0e')
+        self.assertTrue(self.d.snapshot()['last_ack']['rejected'])
+
     def test_subscribes_every_topic(self):
         result=[]
         client=SimpleNamespace(subscribe=lambda topics:(result.extend(topics) or (0,1)))

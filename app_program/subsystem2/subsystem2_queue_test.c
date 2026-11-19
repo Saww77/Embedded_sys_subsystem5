@@ -37,8 +37,8 @@ static void check(const char *name,bool ok)
 static void empty_transport(void)
 {
     bool zero;
+    motion_stop();
     (void)s2_take_stop(&zero);
-    s2_discard_queue();
     s2_record_result(false); /* Clear any test request marked in processing. */
 }
 static void transport_tests(void)
@@ -107,6 +107,21 @@ static void transport_tests(void)
     s2_publish(&fake,true);
     S2_STATUS readback;
     check("Q15 status snapshot round trip",motion_get_status(&readback)&&s2_get_bits(&readback,9,9)==123&&s2_get_bits(&readback,18,9)==124);
+
+    uint16_t turn;
+    check("Q16 shallow turn encodes its own right-hand maneuver",
+          motion_maneuver_turn_45(true, &turn) && s2_take_request(&word, &issued) &&
+          word == turn && (word >> 4) == (S2_MANEUVER_TURN_45 | 1u));
+    s2_record_result(true);
+    bool movement_queued = motion_forward();
+    s2_put_bits(&fake, 5, 4, 1);
+    s2_publish(&fake, true);
+    bool clear_queued = motion_clear_faults();
+    s2_discard_motion();
+    check("Q17 a fault discards movement and preserves explicit reset",
+          movement_queued && clear_queued && !motion_forward() &&
+          s2_take_request(&word, &issued) && word == S2_CLEAR);
+    s2_record_result(true);
     fake=(S2_STATUS){{0}};s2_publish(&fake,false); /* Leave module NOT ready. */
 }
 static void probe(unsigned tag)

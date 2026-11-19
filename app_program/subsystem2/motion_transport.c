@@ -4,8 +4,8 @@
 
 _Static_assert(S2_QUEUE_LENGTH==8,"Queue index bit widths assume length 8");
 _Static_assert(MAX_DISTANCE_MM < S2_MANEUVER_TURN, "Maneuver distance must fit in 11 bits");
-_Static_assert(S2_MANEUVER_REVERSE_BASE + MAX_DISTANCE_MM < 4096u,
-               "Reverse maneuver must fit the existing 12-bit argument");
+_Static_assert(S2_MANEUVER_REVERSE_BASE + MAX_DISTANCE_MM < S2_MANEUVER_TURN_45,
+               "Reverse distance and 45-degree turns must have distinct encodings");
 static ID transport_lock;
 /* Native micro T-Kernel task-context mutex with priority inheritance.
  * Never call any transport API from an interrupt. Initialise ONCE at startup. */
@@ -44,7 +44,8 @@ static bool submit(unsigned op,unsigned arg)
     if(!transport_lock) return false;
     uint32_t now=s2_now_ms();
     lock_transport();
-    bool ok=q.ready && !q.stop && q.count<8;
+    bool ok=q.ready && !q.stop && q.count<8 &&
+            (op == S2_CLEAR || !s2_get_bits(&cached, 5, 4));
     if(ok){commands[q.tail]=(uint16_t)(op | (arg<<4));issued_ms[q.tail]=now;q.tail=(q.tail+1)&7;q.count++;}
     unlock_transport();return ok;
 }
@@ -102,6 +103,11 @@ bool motion_maneuver(unsigned distance_mm, bool right, uint16_t *command)
     return submit_maneuver(arg, command);
 }
 
+bool motion_maneuver_turn_45(bool right, uint16_t *command)
+{
+    return submit_maneuver(S2_MANEUVER_TURN_45 | (unsigned)right, command);
+}
+
 bool motion_maneuver_reverse(unsigned distance_mm, uint16_t *command)
 {
     if (!distance_mm || distance_mm > MAX_DISTANCE_MM) return false;
@@ -151,8 +157,22 @@ bool s2_publish(const S2_STATUS *s,bool ready)
 }
 void s2_record_result(bool ok)
 {lock_transport();q.result=ok;q.processing=0;result_seq++;unlock_transport();}
-void s2_discard_queue(void)
-{lock_transport();q.count=0;q.head=q.tail=0;unlock_transport();}
+void s2_discard_motion(void)
+{
+    lock_transport();
+    /* A reset can arrive after the owner dequeues and before a fault flush. */
+    unsigned kept = 0;
+    for (unsigned i = 0; i < q.count; ++i) {
+        unsigned from = (q.head + i) & 7u;
+        if ((commands[from] & 15u) != S2_CLEAR) continue;
+        unsigned to = (q.head + kept++) & 7u;
+        commands[to] = commands[from];
+        issued_ms[to] = issued_ms[from];
+    }
+    q.count = kept;
+    q.tail = (q.head + kept) & 7u;
+    unlock_transport();
+}
 
 void s2_record_owner_result(uint16_t word,uint32_t age,unsigned reason,bool ok)
 {

@@ -8,12 +8,16 @@
 #include "mqtt_utk.h"
 #include "mqtt_bridge.h"
 #include <string.h>
+#include <stdbool.h>
+#include <tm/tmonitor.h>
 
 #ifndef MQTT_TOPIC_ROOT
 #define MQTT_TOPIC_ROOT "robot/" MQTT_CLIENT_ID "/v2"
 #endif
-#define RETRY_MS 3000u
+#define RETRY_MS 1000u
+#define HANDSHAKE_MS 4000u
 #define HEARTBEAT_MS 5000u
+#define HEARTBEAT_RETRY_MS 100u
 #define PENDING_MS 5000u
 #define TOPIC_MAX 80u
 #define TX_BUDGET 2u
@@ -33,6 +37,7 @@ static u8_t connecting;
 static u8_t subscribing;
 static unsigned char flags;
 static u32_t retry_at;
+static u32_t handshake_at;
 static u32_t subscribe_at;
 static u32_t heartbeat_at;
 static unsigned char pending[MQTT_BRIDGE_FRAME_MAX];
@@ -93,6 +98,8 @@ static void subscribe_done_cb(void *arg, err_t result)
     subscribing = 0;
     if (result == ERR_OK && (flags & MQTT_LINK_BROKER) != 0u) {
         flags |= MQTT_LINK_SUBSCRIBED;
+        heartbeat_at = sys_now();
+        tm_printf((const UB*)"mqtt: ready for commands\n");
     } else {
         flags &= ~MQTT_LINK_SUBSCRIBED;
         subscribe_at = sys_now() + RETRY_MS;
@@ -118,6 +125,7 @@ static void connection_cb(mqtt_client_t *c, void *arg, mqtt_connection_status_t 
         mqtt_set_inpub_callback(client, incoming_publish_cb, incoming_data_cb, 0);
         subscribe_at = sys_now(); /* Restore subscription on EVERY reconnect. */
         heartbeat_at = sys_now();
+        handshake_at = sys_now() + HANDSHAKE_MS;
     } else {
         retry_at = sys_now() + RETRY_MS;
         if (pending_size != 0) { flags |= MQTT_LINK_TX_DROP; }
@@ -130,6 +138,7 @@ static void connect_client(u32_t now)
     struct mqtt_connect_client_info_t info = {0};
     err_t result;
     retry_at = now + RETRY_MS;
+    handshake_at = now + HANDSHAKE_MS;
     if (client == 0) { client = mqtt_client_new(); }
     if (client == 0) { return; }
     if (!ip4addr_aton(MQTT_BROKER_IP, ip_2_ip4(&broker))) { return; }
@@ -150,8 +159,10 @@ void mqtt_utk_poll(int wifi_up)
 {
     u32_t now = sys_now();
     unsigned budget;
-    if (wifi_up) { flags |= MQTT_LINK_WIFI; }
-    else {
+    if (wifi_up && !(flags & MQTT_LINK_WIFI)) {
+        flags |= MQTT_LINK_WIFI;
+        retry_at = now;
+    } else if (!wifi_up && (flags & MQTT_LINK_WIFI)) {
         if (client != 0 && (connecting || (flags & MQTT_LINK_BROKER) != 0u)) {
             mqtt_disconnect(client);
         }
@@ -159,10 +170,18 @@ void mqtt_utk_poll(int wifi_up)
         subscribing = 0;
         rx_valid = 0;
         flags &= ~(MQTT_LINK_WIFI | MQTT_LINK_BROKER | MQTT_LINK_SUBSCRIBED);
-        retry_at = now + RETRY_MS;
     }
     /* The Wi-Fi task can run before usermain creates both message buffers. */
     if (!mqtt_bridge_ready()) { return; }
+    bool waiting = connecting || ((flags & MQTT_LINK_BROKER) && !(flags & MQTT_LINK_SUBSCRIBED));
+    if (waiting && due(now, handshake_at)) {
+        mqtt_disconnect(client);
+        connecting = subscribing = rx_valid = 0;
+        flags &= ~(MQTT_LINK_BROKER | MQTT_LINK_SUBSCRIBED);
+        pending_size = 0;
+        retry_at = now + RETRY_MS;
+        tm_printf((const UB*)"mqtt: connection or subscription timed out; retrying\n");
+    }
     if (wifi_up && !connecting && (flags & MQTT_LINK_BROKER) == 0u && due(now, retry_at)) {
         connect_client(now);
     }
@@ -176,10 +195,12 @@ void mqtt_utk_poll(int wifi_up)
         }
         if (due(now, heartbeat_at)) {
             unsigned char status = (unsigned char)flags;
-            heartbeat_at = now + HEARTBEAT_MS;
             if (mqtt_publish(client, topics[MQTT_ROUTE_STATUS], &status, 1,
                              0, 1, publish_done_cb, 0) != ERR_OK) {
                 flags |= MQTT_LINK_TX_DROP;
+                heartbeat_at = now + HEARTBEAT_RETRY_MS;
+            } else {
+                heartbeat_at = now + HEARTBEAT_MS;
             }
         }
     }

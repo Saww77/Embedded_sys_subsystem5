@@ -193,10 +193,19 @@ static bool turn(unsigned steps,bool right,unsigned rpm)
 bool s2_core_turn_left(unsigned steps) { return turn(steps,false,state.level*MAX_RPM/4u); }
 bool s2_core_turn_right(unsigned steps) { return turn(steps,true,state.level*MAX_RPM/4u); }
 
+static unsigned maneuver_turn_steps(unsigned arg)
+{
+    switch (arg & ~1u) {
+    case S2_MANEUVER_TURN: return S2_MANEUVER_TURN_DEG / S2_TURN_STEP_DEG;
+    case S2_MANEUVER_TURN_45: return 45u / S2_TURN_STEP_DEG;
+    default: return 0;
+    }
+}
+
 bool s2_core_maneuver(unsigned arg)
 {
-    if (arg == S2_MANEUVER_TURN || arg == (S2_MANEUVER_TURN | 1u))
-        return turn(S2_MANEUVER_TURN_DEG / S2_TURN_STEP_DEG, (arg & 1u) != 0, MANEUVER_RPM);
+    unsigned steps = maneuver_turn_steps(arg);
+    if (steps) return turn(steps, (arg & 1u) != 0, MANEUVER_RPM);
     bool reverse = arg > S2_MANEUVER_REVERSE_BASE;
     unsigned mm = reverse ? arg - S2_MANEUVER_REVERSE_BASE : arg;
     return mm && mm <= MAX_DISTANCE_MM &&
@@ -212,9 +221,10 @@ bool s2_core_distance_reached(unsigned mm, const S2_STATUS *status)
 bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status)
 {
     if (s2_get_bits(status,0,2) != IDLE || s2_get_bits(status,5,4)) return false;
-    if (arg == S2_MANEUVER_TURN || arg == S2_MANEUVER_REVERSE_BASE)
-        return s2_get_bits(status,41,13) >= turn_counts(S2_MANEUVER_TURN_DEG / S2_TURN_STEP_DEG,0) &&
-               s2_get_bits(status,54,13) >= turn_counts(S2_MANEUVER_TURN_DEG / S2_TURN_STEP_DEG,1);
+    unsigned steps = maneuver_turn_steps(arg);
+    if (steps)
+        return s2_get_bits(status,41,13) >= turn_counts(steps,0) &&
+               s2_get_bits(status,54,13) >= turn_counts(steps,1);
     unsigned mm = arg > S2_MANEUVER_REVERSE_BASE ? arg - S2_MANEUVER_REVERSE_BASE : arg;
     return mm && mm <= MAX_DISTANCE_MM && s2_core_distance_reached(mm, status);
 }

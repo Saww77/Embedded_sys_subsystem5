@@ -36,7 +36,8 @@
  * that drops the handshake under load. Without a retry the radio would sit in
  * CYW43_LINK_FAIL until the next power cycle, so re-issue the join on a fixed
  * backoff for as long as the link is down. */
-#define WIFI_REJOIN_DELAY_US (5 * 1000 * 1000ull)
+#define WIFI_REJOIN_DELAY_US 1500000ull
+#define WIFI_AUTH_RETRY_US 5000000ull
 
 /* Overridable from the makefile if an AP needs something else. MIXED accepts
  * both TKIP and AES; the driver treats it the same as WPA2_AES_PSK for a
@@ -161,6 +162,8 @@ static void run_diagnostic_scan(void)
 #endif
 
 #if TM_NET_LWIP
+static uint64_t join_started;
+
 /* Caller must hold cyw43_thread_enter(). Returns the driver's acceptance of
  * the join *request*; the actual outcome arrives later as a link status.
  *
@@ -173,6 +176,7 @@ static int32_t wifi_try_join(void)
     int32_t err;
 
     tm_printf((UB*)"wifi: joining \"%s\" ...\n", WIFI_SSID);
+    join_started = time_us_64();
 
     err = cyw43_wifi_join(&cyw43_state,
                           strlen(WIFI_SSID), (const uint8_t*)WIFI_SSID,
@@ -245,10 +249,9 @@ void cyw43_utk_task(int32_t stacd, void *exinf)
         run_diagnostic_scan();
 #endif
 
-        /* Only the *request* outcome. The AP's verdict shows up later as
-         * radio_status.link_status, polled below, which is also where a
-         * failed association gets retried. */
-        result = wifi_try_join();
+        /* The interface can service retries even if this join request fails. */
+        result = 0;
+        (void)wifi_try_join();
 #else
         result = cyw43_wifi_scan(&cyw43_state, &options, &radio_status,
                                  scan_result);
@@ -274,7 +277,7 @@ void cyw43_utk_task(int32_t stacd, void *exinf)
     }
 
 #if TM_NET_LWIP
-    int32_t  prev_link_status = radio_status.link_status;
+    int32_t prev_link_status = INT32_MAX; /* Inspect the initial DOWN state too. */
     uint64_t rejoin_at = 0;
 #endif
 
@@ -291,31 +294,31 @@ void cyw43_utk_task(int32_t stacd, void *exinf)
             prev_link_status = radio_status.link_status;
             if(radio_status.link_status == CYW43_LINK_UP) {
                 uint32_t ip = radio_status.ip_addr;
-                tm_printf((UB*)"wifi: link up, ip=%d.%d.%d.%d\n",
+                tm_printf((UB*)"wifi: link up, ip=%d.%d.%d.%d (%u ms from join request)\n",
                           (int)(ip & 0xff), (int)((ip >> 8) & 0xff),
-                          (int)((ip >> 16) & 0xff), (int)((ip >> 24) & 0xff));
+                          (int)((ip >> 16) & 0xff), (int)((ip >> 24) & 0xff),
+                          (unsigned)((time_us_64() - join_started) / 1000u));
             } else {
                 tm_printf((UB*)"wifi: link status -> %s (%d)\n",
                           link_status_str(radio_status.link_status),
                           (int)radio_status.link_status);
             }
 
-            /* Negative == the association attempt is over and lost. Arm a
-             * retry; a positive-but-not-UP status (JOIN/NOIP) is still making
-             * progress, so leave it alone and let DHCP finish. */
-            rejoin_at = (radio_status.link_status < 0)?
-                        time_us_64() + WIFI_REJOIN_DELAY_US: 0;
+            /* JOIN and NOIP are in progress. DOWN or a failure can retry. */
+            uint64_t delay = radio_status.link_status == CYW43_LINK_BADAUTH ?
+                             WIFI_AUTH_RETRY_US : WIFI_REJOIN_DELAY_US;
+            rejoin_at = radio_status.link_status <= CYW43_LINK_DOWN ? time_us_64() + delay : 0;
         }
 
         if(rejoin_at != 0 && time_us_64() >= rejoin_at) {
             rejoin_at = 0;
-            if(radio_status.link_status < 0) {
+            if(radio_status.link_status <= CYW43_LINK_DOWN) {
                 (void)wifi_try_join();
                 /* Force the next iteration to treat whatever comes back as a
                  * change, so the new outcome is always reported. Must be a
                  * value cyw43_tcpip_link_status() can never return (it yields
                  * -3..3), or a genuine repeat failure would be swallowed. */
-                prev_link_status = 0x7fffffff;
+                prev_link_status = INT32_MAX;
             }
         }
 #else

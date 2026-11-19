@@ -42,6 +42,7 @@ bool motion_turn_right(unsigned steps);
 /* Encoder-bounded 36 RPM maneuver. Set distance for straight travel, or pass
  * zero distance and a direction for a 90 degree pivot. Returns the reply word. */
 bool motion_maneuver(unsigned distance_mm, bool right, uint16_t *command);
+bool motion_maneuver_turn_45(bool right, uint16_t *command);
 bool motion_maneuver_reverse(unsigned distance_mm, uint16_t *command);
 void motion_stop(void); /* High-priority latch, discards queued commands. */
 bool motion_clear_faults(void); /* Queued explicit reset; no auto-resume. */

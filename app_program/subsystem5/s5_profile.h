@@ -13,6 +13,7 @@
 #define S5_CENTRE_INDEX ((S5_CENTRE_ANGLE - S5_MIN_ANGLE) / S5_FINE_STEP)
 #define S5_NO_TARGET S5_SCAN_POINTS
 #define S5_UNKNOWN_WIDTH 2047u
+#define S5_MAX_PROJECTED_FRONT_MM 511u
 #define S5_PROFILE_TOLERANCE_MM 100u
 
 /* Scan offsets increase from the robot's left to its right. */
@@ -24,6 +25,7 @@ static inline unsigned s5_servo_angle(unsigned scan_offset_deg)
 typedef struct {
     unsigned nearest_mm : 12;
     unsigned width_mm : 11;
+    unsigned front_mm : 9; /* Nearest longitudinal projection, capped at 511 mm. */
     unsigned left_mm : 12;
     unsigned right_mm : 12;
     unsigned angle_offset_deg : 7;

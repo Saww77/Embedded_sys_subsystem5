@@ -117,7 +117,7 @@ EXPORT void motion_control_task(INT stacd,void *exinf)
             stopped_at_ms=s2_now_ms();settling_active=true;
         }
         was_busy=busy;
-        if(s2_core_faults())s2_discard_queue();
+        if(s2_core_faults())s2_discard_motion();
         bool changed = s2_publish(&snapshot,ready);
         if(have)s2_record_owner_result(word,age,reason,accepted);
 #if !APP_BUDDY1_DEMO

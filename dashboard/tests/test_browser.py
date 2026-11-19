@@ -67,6 +67,7 @@ def main():
                 client.publish(root+"/controller",cleared)
                 idle=bytearray(motion_packet());idle[0]&=~3
                 client.publish(root+"/motion",idle);client.publish(root+"/vehicle",b"\x00")
+                client.publish(root+"/ack",b"\x0c")
         fixture.on_connect, fixture.on_subscribe, fixture.on_message = on_connect, on_subscribe, on_message
         fixture.connect("127.0.0.1", port, 60)
         fixture.loop_start()
@@ -201,9 +202,9 @@ def main():
             expect(page.locator("#motor-faults")).to_contain_text("Gap 12.00 ms / limit 15.00 ms")
             expect(page.locator("#reset")).to_be_enabled()
             page.locator("#reset").click()
-            expect(page.locator("#command-feedback")).to_have_text("Pico ACK: RESET accepted for processing.")
+            expect(page.locator("#command-feedback")).to_have_text("Reset complete. Check the track and press Start when ready.")
             expect(page.locator("#mission-state")).to_have_text("IDLE")
-            expect(page.locator("#reset")).to_be_disabled()
+            expect(page.locator("#start")).to_be_enabled()
             assert commands[-1]==(b"\x02",0,False) and len(commands)==5
             print("PASS fault recovery: stopped-only RESET sends02, clears fixture fault, leaves mission IDLE and never sends START")
             fixture.publish(root+"/vehicle",b"\x01").wait_for_publish(timeout=5)

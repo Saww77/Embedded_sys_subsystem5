@@ -11,6 +11,7 @@ ER s1_publish_terrain(unsigned height_mm, unsigned phase); /* phases 0..5 */
 ER s1_publish_obstacle(unsigned nearest_mm, unsigned width_mm,
                        unsigned left_mm, unsigned right_mm, unsigned angle_deg);
 ER s1_publish_motion(void);
+ER s1_publish_reset_result(BOOL ok);
 void s1_publish_telemetry(void);
 unsigned s1_connection_status(void); /* bits: WiFi, broker, subscribed, TX drop, RX drop */
 void s1_comm_task(INT stacd, void *exinf);

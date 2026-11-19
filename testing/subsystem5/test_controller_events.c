@@ -4,7 +4,8 @@
 #include "../../app_program/vehicle_controller/vehicle_controller.c"
 
 static uint32_t clock_ms;
-static unsigned event_flags, stop_count, command_count, scan_count;
+static unsigned event_flags, stop_count, command_count, scan_count, clear_count, reset_count;
+static bool reset_result;
 static unsigned connection = 7;
 static bool motor_busy;
 static S2_STATUS motor;
@@ -33,6 +34,7 @@ ER tk_wai_flg(ID id, UINT wanted, UINT mode, UINT *seen, TMO timeout)
 }
 
 unsigned s1_connection_status(void) { return connection; }
+ER s1_publish_reset_result(BOOL ok) { ++reset_count; reset_result = ok; return E_OK; }
 uint32_t s2_core_timing_fault_gap_us(void) { return 0; }
 bool s2_core_distance_reached(unsigned mm, const S2_STATUS *status)
 { (void)mm; (void)status; return false; }
@@ -63,9 +65,11 @@ bool motion_set_wheel_rpm_tracked(unsigned left, unsigned right, uint16_t *comma
     return true;
 }
 
-bool motion_clear_faults(void) { assert(0); return false; }
+bool motion_clear_faults(void) { ++clear_count; return true; }
 bool motion_maneuver(unsigned mm, bool right, uint16_t *command)
 { (void)mm; (void)right; (void)command; assert(0); return false; }
+bool motion_maneuver_turn_45(bool right, uint16_t *command)
+{ (void)right; (void)command; assert(0); return false; }
 bool motion_maneuver_reverse(unsigned mm, uint16_t *command)
 { (void)mm; (void)command; assert(0); return false; }
 void subsystem5_request_scan(void) { ++scan_count; }
@@ -155,5 +159,34 @@ int main(void)
     S5_PROFILE stale = {.nearest_mm = S5_SCAN_STOP_MM};
     vehicle_finish_obstacle_scan(&stale, request);
     assert(!event_flags && command_count == 2);
-    puts("PASS controller wakeups, START interlock, STOP priority, motor replies and scan cancellation");
+
+    /* A cancelled detour can be reset even with an empty motor fault mask. */
+    connection = 7;
+    vehicle_submit_obstacle_range(600);
+    assert(vehicle_request_reset());
+    assert(work() > 0 && !reset_count && !vehicle_request_start());
+    motor_stopped();
+    assert(work() == TMO_FEVR && reset_count == 1 && reset_result && !clear_count);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_IDLE &&
+           snapshot.avoidance_phase == S5_OFF && !snapshot.reset_pending);
+    assert(command_count == 2);
+
+    s2_put_bits(&motor, 5, 4, 4);
+    vehicle_notify_feedback();
+    assert(work() == TMO_FEVR && vehicle_state() == VC_FAULT);
+    assert(vehicle_request_reset());
+    assert(work() > 0 && !clear_count);
+    motor_stopped();
+    assert(work() > 0 && clear_count == 1 && reset_count == 1);
+    s2_put_bits(&motor, 5, 4, 0);
+    vehicle_notify_feedback();
+    assert(work() == TMO_FEVR && reset_count == 2 && reset_result);
+    assert(vehicle_state() == VC_IDLE && command_count == 2);
+
+    assert(vehicle_request_reset());
+    work();
+    clock_ms += VC_RESET_TIMEOUT_MS;
+    vehicle_notify_feedback();
+    assert(work() == TMO_FEVR && reset_count == 3 && !reset_result);
+    puts("PASS controller events, START interlock, STOP priority, scan cancellation and stopped reset");
 }

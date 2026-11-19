@@ -129,7 +129,7 @@ static void test_repeat_and_narrow_target(void)
     s5_scan_set(&scan, 13, S5_OPEN_RANGE);
     unsigned span;
     S5_PROFILE profile = s5_profile(&scan, 11, 13, 12, &span);
-    assert(span == 0 && profile.width_mm == 26);
+    assert(span == 0 && profile.width_mm == 26 && profile.front_mm == 300);
     assert(profile.left_edge_mm == -26 && profile.right_edge_mm == 26);
 }
 

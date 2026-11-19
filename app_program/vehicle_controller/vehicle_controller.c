@@ -14,10 +14,12 @@
 #endif
 #define VC_REFRESH_MS 100u
 #define VC_ACTION_TIMEOUT_MS 250u
+#define VC_RESET_TIMEOUT_MS 2500u
 #define VC_RETRACE_MIN_MS 600u
 #define VC_WAKE 1u
 
 _Static_assert(S3_ADVANCE_MM > 0 && S3_ADVANCE_MM < 512u, "Axle offset must fit in 9 bits");
+_Static_assert(S5_BYPASS_TURN_DEG == S2_TURN_STEP_DEG, "Detour geometry uses one 45-degree turn step");
 enum { SCAN_OFF, SCAN_READY, SCAN_ACTIVE };
 static ID guard, work_event;
 static VEHICLE_SNAPSHOT data;
@@ -26,7 +28,7 @@ static struct {
     unsigned start:1, stop:1, line_stop:1, auto_start:1, reset:1;
     unsigned obstacle_monitor:1, profile_valid:1, scan:2;
 } pending;
-static uint32_t reset_refreshed;
+static uint32_t reset_started, reset_refreshed;
 static S5_RANGE_GATE obstacle_range;
 static uint32_t obstacle_range_at, full_profile_at, scan_request_id;
 static S5_PROFILE full_profile;
@@ -96,12 +98,13 @@ BOOL vehicle_request_reset(void)
     S2_STATUS motor = {{0}};
     bool busy = false;
     BOOL ok = !vc_core_running(&model) && !pending.start && !pending.stop && !pending.reset &&
-              motion_get_feedback(&motor, NULL, &busy) && !busy &&
-              s2_get_bits(&motor, 5, 4) != 0;
+              motion_get_feedback(&motor, NULL, &busy);
     if (ok) {
         pending.reset = true;
-        reset_refreshed = now_ms() - VC_REFRESH_MS;
+        reset_started = now_ms();
+        reset_refreshed = reset_started - VC_REFRESH_MS;
         pending.auto_start = false;
+        motion_stop();
     }
     unlock();
     if (ok) vehicle_notify_feedback();
@@ -324,9 +327,10 @@ static void submit_output(const VC_INPUT *in, const VC_OUTPUT *out, const S2_REP
         if (action == S5_WAIT) return;
         if (action == S5_REVERSE)
             submitted = motion_maneuver_reverse(out->maneuver.distance_mm, &drive.command);
+        else if (action == S5_ADVANCE)
+            submitted = motion_maneuver(out->maneuver.distance_mm, false, &drive.command);
         else
-            submitted = motion_maneuver(out->maneuver.distance_mm, action == S5_PIVOT_RIGHT,
-                                        &drive.command);
+            submitted = motion_maneuver_turn_45(action == S5_PIVOT_RIGHT, &drive.command);
         drive.velocity = false;
     } else {
         bool refresh = !drive.moving || in->avoidance.now - drive.refreshed >= VC_REFRESH_MS;
@@ -350,7 +354,7 @@ static const char *const avoidance_phase_name[] = {
     [S5_OFF] = "idle",
     [S5_PROFILE_PATH] = "stopped for obstacle scan",
     [S5_TURN_OUT] = "turning off the line",
-    [S5_SHIFT_OUT] = "moving sideways",
+    [S5_SHIFT_OUT] = "driving diagonally around obstacle",
     [S5_ALIGN_OUTSIDE] = "aligning for bypass",
     [S5_PASS] = "passing obstacle",
     [S5_TURN_IN] = "turning toward original line",
@@ -389,13 +393,12 @@ static TMO vehicle_service_once(void)
 #endif
     if (model.avoidance.phase == S5_FIND_LINE &&
         (in.avoidance.motion == S5_MOTION_PENDING || in.avoidance.motion == S5_MOTION_DONE)) {
-        unsigned cross_margin = S3_ADVANCE_MM + S5_SEARCH_MARGIN_MM;
-        unsigned min_cross_mm = model.avoidance.offset_mm > cross_margin ?
-                                model.avoidance.offset_mm - cross_margin : 0;
+        unsigned min_cross_mm = s5_reentry_detection_mm(model.avoidance.offset_mm, S3_ADVANCE_MM);
         in.avoidance.near_original_line = s2_core_distance_reached(min_cross_mm, &status);
     }
     bool straight = model.state == VC_FOLLOW_LINE && in.avoidance.line_centered &&
-                    in.left_rpm == in.right_rpm && left_measured >= 20 && right_measured >= 20 &&
+                    in.left_rpm == in.right_rpm &&
+                    left_measured >= S5_APPROACH_RPM / 2u && right_measured >= S5_APPROACH_RPM / 2u &&
                     left_measured <= right_measured + 3 && right_measured <= left_measured + 3 &&
                     in.line_valid && in.line_age_ms <= VC_LINE_MAX_AGE_MS;
     if (straight && !tracking_straight) straight_since = now;
@@ -410,21 +413,29 @@ static TMO vehicle_service_once(void)
     pending.start = pending.stop = pending.line_stop = false;
     S5_PHASE previous = model.avoidance.phase;
     vc_core_step(&model, &in, &out);
+    bool reset_done = false, reset_ok = false;
+    if (in.reset) {
+        if (in.avoidance.stopped && !in.motor_faults) {
+            reset_ok = reset_done = true;
+            model = (VC_MODEL){0};
+            pending.profile_valid = false;
+            pending.scan = SCAN_OFF;
+            tracking_straight = false;
+            data.obstacle_profile = data.obstacle_valid = false;
+            data.last_start_reject = VC_START_READY;
+        } else if (now - reset_started >= VC_RESET_TIMEOUT_MS) {
+            reset_done = true;
+            motion_stop();
+        } else if (in.avoidance.stopped && now - reset_refreshed >= VC_REFRESH_MS) {
+            (void)motion_clear_faults();
+            reset_refreshed = now;
+        }
+        if (reset_done) pending.reset = false;
+    }
     S5_PHASE phase = model.avoidance.phase;
     unsigned side = model.avoidance.side;
     unsigned offset = model.avoidance.offset_mm;
     unsigned pass = model.avoidance.next_pass_mm;
-    if (in.reset && out.stop) {
-        if (!in.motor_faults) {
-            pending.reset = false;
-            model.state = VC_IDLE;
-            model.reason = VC_REASON_NONE;
-        } else if (!busy && now - reset_refreshed >= VC_REFRESH_MS) {
-            (void)motion_clear_faults();
-            reset_refreshed = now;
-        }
-    }
-
     /* Serialize dispatch with the request latch, so STOP can cancel an entire
        batch before any later movement is submitted. */
     submit_output(&in, &out, &reply, vc_core_detouring(&model));
@@ -454,12 +465,18 @@ static TMO vehicle_service_once(void)
 
     if (scan) subsystem5_request_scan();
     if (dispatch_failed) vehicle_notify_feedback();
+#if TM_MQTT
+    if (reset_done && s1_publish_reset_result(reset_ok) < E_OK) vehicle_record_telemetry_drop();
+#else
+    (void)reset_ok;
+#endif
     if (previous != phase) {
         tm_printf((UB*)"[S5] avoidance phase=%u side=%u at %u ms: %s\n",
                   (unsigned)phase, side, (unsigned)now, avoidance_phase_name[phase]);
         if (phase == S5_TURN_OUT)
-            tm_printf((UB*)"[S5] bypass side=%s offset=%u mm pass=%u mm\n",
-                      side == S5_LEFT ? "left" : "right", offset, pass);
+            tm_printf((UB*)"[S5] bypass side=%s turn=%u deg diagonal=%u mm offset=%u mm pass=%u mm\n",
+                      side == S5_LEFT ? "left" : "right", S5_BYPASS_TURN_DEG,
+                      s5_diagonal_mm(offset), offset, pass);
         if (phase == S5_FAILED)
             tm_printf((UB*)"[S5] stopped during %s, vehicle reason=%u\n",
                       avoidance_phase_name[previous], reason);

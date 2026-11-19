@@ -305,8 +305,9 @@ static void bench_print_plan(const S5_PROFILE *profile)
         tm_printf((UB*)"[S5 BENCH] plan=STOP turn=0 deg. Scan did not establish a usable bypass.\n");
         return;
     }
-    tm_printf((UB*)"[S5 BENCH] plan=%s turn=%u deg lateral_offset=%u mm pass=%u mm\n",
-              side == S5_LEFT ? "LEFT" : "RIGHT", S2_MANEUVER_TURN_DEG, offset, pass);
+    tm_printf((UB*)"[S5 BENCH] plan=%s turn=%u deg diagonal=%u mm lateral_offset=%u mm pass=%u mm\n",
+              side == S5_LEFT ? "LEFT" : "RIGHT", S5_BYPASS_TURN_DEG,
+              s5_diagonal_mm(offset), offset, pass);
 }
 
 EXPORT void subsystem5_bench(void)

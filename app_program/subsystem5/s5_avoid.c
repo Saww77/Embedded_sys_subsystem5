@@ -1,8 +1,10 @@
 #include "s5_avoid.h"
 
 #define BODY_MARGIN_MM 135u
-#define MAX_OFFSET_MM 400u
-#define FOLLOW_AHEAD_MARGIN_MM 90u
+#define FRONT_MARGIN_MM 15u
+#define MAX_OFFSET_MM (S5_CLEAR_MM - FRONT_MARGIN_MM)
+#define FOLLOW_AHEAD_MARGIN_MM 130u
+#define MIN_PASS_MM 60u
 #define RETRY_STEP_MM 60u
 #define MOTION_SETTLE_MS 260u
 #define SCAN_TIMEOUT_MS 11000u
@@ -11,6 +13,9 @@
 _Static_assert(S5_CLEAR_MM + FOLLOW_AHEAD_MARGIN_MM <= S5_MAX_PASS_MM,
                "The maximum profiled distance must fit the bypass budget");
 _Static_assert(S5_MAX_PASS_MM < 512u, "Bypass distances must fit the 9-bit fields");
+_Static_assert(MAX_OFFSET_MM <= 255u, "Lateral offset must fit in 8 bits");
+_Static_assert((MAX_OFFSET_MM + S5_SEARCH_MARGIN_MM) * 1415u <= 511000u,
+               "Diagonal search must fit in 9 bits");
 
 static bool at_or_after(uint32_t time, uint32_t reference)
 {
@@ -37,28 +42,46 @@ void s5_avoid_begin(S5_AVOID *state, uint32_t now)
     *state = (S5_AVOID){.phase = S5_PROFILE_PATH, .phase_at = now};
 }
 
-static bool safe_side(unsigned clearance, unsigned offset)
+unsigned s5_diagonal_mm(unsigned lateral_mm)
+{
+    /* At 45 degrees, both projections are equal. Round up the travel. */
+    return (lateral_mm * 1415u + 999u) / 1000u;
+}
+
+unsigned s5_reentry_detection_mm(unsigned offset_mm, unsigned sensor_to_axle_mm)
+{
+    if (offset_mm <= S5_SEARCH_MARGIN_MM) return 0;
+    unsigned search_mm = s5_diagonal_mm(offset_mm - S5_SEARCH_MARGIN_MM);
+    return search_mm > sensor_to_axle_mm ? search_mm - sensor_to_axle_mm : 0;
+}
+
+static bool safe_side(unsigned clearance, unsigned offset, unsigned front)
 {
     return s5_range_available(clearance) && offset <= MAX_OFFSET_MM &&
-           clearance >= offset + S5_MANEUVER_STOP_MM;
+           offset + FRONT_MARGIN_MM <= front &&
+           clearance >= s5_diagonal_mm(offset) + S5_MANEUVER_STOP_MM;
 }
 
 S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned *pass_mm)
 {
-    if (profile->nearest_mm < S5_TURN_CLEARANCE_MM ||
-        profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM > S5_MAX_PASS_MM)
+    if (!profile->left_edge_valid || !profile->right_edge_valid ||
+        !profile->width_mm || profile->width_mm == S5_UNKNOWN_WIDTH ||
+        !s5_range_measured(profile->nearest_mm) || profile->nearest_mm > S5_CLEAR_MM ||
+        profile->front_mm < S5_TURN_CLEARANCE_MM)
         return S5_NO_SIDE;
 
     unsigned left_offset = BODY_MARGIN_MM + (profile->left_edge_mm < 0 ? -profile->left_edge_mm : 0);
     unsigned right_offset = BODY_MARGIN_MM + (profile->right_edge_mm > 0 ? profile->right_edge_mm : 0);
-    bool left = profile->left_edge_valid && safe_side(profile->left_mm, left_offset);
-    bool right = profile->right_edge_valid && safe_side(profile->right_mm, right_offset);
+    bool left = safe_side(profile->left_mm, left_offset, profile->front_mm);
+    bool right = safe_side(profile->right_mm, right_offset, profile->front_mm);
     if (!left && !right) return S5_NO_SIDE;
 
     bool use_left = left && (!right || profile->left_mm > profile->right_mm ||
                             (profile->left_mm == profile->right_mm && left_offset <= right_offset));
     *offset_mm = use_left ? left_offset : right_offset;
-    *pass_mm = profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM;
+    /* The departure diagonal already advances by one lateral offset. */
+    unsigned forward_goal = profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM;
+    *pass_mm = forward_goal > *offset_mm + MIN_PASS_MM ? forward_goal - *offset_mm : MIN_PASS_MM;
     return use_left ? S5_LEFT : S5_RIGHT;
 }
 
@@ -114,8 +137,9 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
             return wait;
         return go(state, S5_COMPLETE, in->now);
     }
-    if (forward && (in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING) &&
-        (!range_fresh || in->range_mm <= S5_MANEUVER_STOP_MM))
+    if ((in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING) &&
+        (!range_fresh || in->range_mm < S5_TURN_CLEARANCE_MM ||
+         (forward && in->range_mm <= S5_MANEUVER_STOP_MM)))
         return fail(state, in->now);
 
     if (phase == S5_FIND_LINE && (in->motion == S5_MOTION_PENDING || in->motion == S5_MOTION_DONE)) {
@@ -150,14 +174,16 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         !range_fresh || !at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS)) return wait;
     if (!forward) {
         if (in->range_mm < S5_TURN_CLEARANCE_MM) return fail(state, in->now);
+        if (phase == S5_TURN_OUT && in->range_mm < state->offset_mm + FRONT_MARGIN_MM)
+            return fail(state, in->now);
         bool outward = phase == S5_TURN_OUT || phase == S5_ALIGN_RETRY || phase == S5_ALIGN_LINE;
         bool left = outward ? state->side == S5_LEFT : state->side == S5_RIGHT;
         return (S5_AVOID_OUTPUT){.action = left ? S5_PIVOT_LEFT : S5_PIVOT_RIGHT};
     }
-    unsigned distance = phase == S5_SHIFT_OUT ? state->offset_mm :
+    unsigned distance = phase == S5_SHIFT_OUT ? s5_diagonal_mm(state->offset_mm) :
                         phase == S5_PASS ? state->next_pass_mm :
                         phase == S5_CENTER_LINE ? in->sensor_to_axle_mm :
-                        state->offset_mm + S5_SEARCH_MARGIN_MM;
+                        s5_diagonal_mm(state->offset_mm + S5_SEARCH_MARGIN_MM);
     if (in->range_mm < distance + S5_MANEUVER_STOP_MM) {
         if (phase != S5_FIND_LINE || state->passed_mm == S5_MAX_PASS_MM)
             return fail(state, in->now);

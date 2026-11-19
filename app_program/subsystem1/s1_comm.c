@@ -52,6 +52,12 @@ unsigned s1_connection_status(void)
 #endif
 }
 
+ER s1_publish_reset_result(BOOL ok)
+{
+    unsigned char ack = S1_ACK_RESET | S1_ACK_COMPLETE | (ok ? 0u : S1_ACK_REJECTED);
+    return publish(MQTT_ROUTE_ACK, &ack, 1u);
+}
+
 void s1_comm_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
@@ -81,10 +87,10 @@ void s1_comm_task(INT stacd, void *exinf)
             unsigned op;
             unsigned char ack;
             if (!s1_command_decode(frame + 1, (unsigned)length - 1u, &op)) {
-                ack = (unsigned char)((frame[1] & 1u) | 2u);
+                ack = (unsigned char)((frame[1] & 1u) | S1_ACK_REJECTED);
             } else {
                 stop_seen |= op == S1_CMD_STOP;
-                ack = op == S1_CMD_RESET ? 4u : (unsigned char)op;
+                ack = op == S1_CMD_RESET ? S1_ACK_RESET : (unsigned char)op;
             }
             acks[count++] = ack;
         }
@@ -92,8 +98,8 @@ void s1_comm_task(INT stacd, void *exinf)
         if (stop_seen) vehicle_request_stop();
         for (unsigned i = 0; i < count; ++i) {
             unsigned char ack = acks[i];
-            if (ack == S1_CMD_START && (stop_seen || !vehicle_request_start())) ack |= 2u;
-            if (ack == 4u && (stop_seen || !vehicle_request_reset())) ack |= 2u;
+            if (ack == S1_CMD_START && (stop_seen || !vehicle_request_start())) ack |= S1_ACK_REJECTED;
+            if (ack == S1_ACK_RESET && (stop_seen || !vehicle_request_reset())) ack |= S1_ACK_REJECTED;
             (void)publish(MQTT_ROUTE_ACK, &ack, 1u);
         }
         /* Yield to sensing and controller tasks during a sustained burst. */

@@ -4,6 +4,9 @@
 #define S1_CMD_STOP 0u
 #define S1_CMD_START 1u
 #define S1_CMD_RESET 2u
+#define S1_ACK_REJECTED 2u
+#define S1_ACK_RESET 4u
+#define S1_ACK_COMPLETE 8u
 #define S1_FAULT_MOTOR 1u
 #define S1_FAULT_ENCODER 2u
 #define S1_FAULT_IMU 4u

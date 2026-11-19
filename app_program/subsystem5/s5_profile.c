@@ -2,6 +2,8 @@
 
 #define MAX_WIDTH_MM 2000
 
+_Static_assert(S5_CLEAR_MM <= S5_MAX_PROJECTED_FRONT_MM, "Front projection must cover the obstacle window");
+
 static int lateral_mm(unsigned index, unsigned range_mm)
 {
     /* sin(0..60 degrees) in steps of 5 degrees, scaled by 1024. */
@@ -10,6 +12,15 @@ static int lateral_mm(unsigned index, unsigned range_mm)
     int offset = (int)index - (S5_SCAN_POINTS - 1) / 2;
     int projection = (int)range_mm * sine[offset < 0 ? -offset : offset] / 1024;
     return offset < 0 ? -projection : projection;
+}
+
+static unsigned project_forward_mm(unsigned index, unsigned range_mm)
+{
+    /* cos(0..60 degrees) in steps of 5 degrees, scaled by 1024 and rounded down. */
+    static const unsigned short cosine[] = {1024, 1020, 1008, 989, 962, 928, 886,
+                                           838, 784, 724, 658, 587, 512};
+    unsigned offset = index < S5_CENTRE_INDEX ? S5_CENTRE_INDEX - index : index - S5_CENTRE_INDEX;
+    return range_mm * cosine[offset] / 1024u;
 }
 
 void s5_scan_set(S5_SCAN *scan, unsigned index, unsigned range)
@@ -82,11 +93,18 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     S5_EDGE left = profile_edge(scan, anchor, first, -1);
     S5_EDGE right = profile_edge(scan, anchor, last, 1);
     unsigned near = anchor;
+    unsigned reference = s5_scan_get(scan, anchor);
+    unsigned front = reference;
     for (unsigned i = left.last_hit; i <= right.last_hit; ++i) {
-        if (s5_scan_get(scan, i) < s5_scan_get(scan, near)) near = i;
+        unsigned range = s5_scan_get(scan, i);
+        if (!s5_same_obstacle(range, reference)) continue;
+        if (range < s5_scan_get(scan, near)) near = i;
+        unsigned forward = project_forward_mm(i, range);
+        if (forward < front) front = forward;
     }
     S5_PROFILE result = {
         .nearest_mm = s5_scan_get(scan, near), .angle_offset_deg = near * S5_FINE_STEP,
+        .front_mm = front < S5_MAX_PROJECTED_FRONT_MM ? front : S5_MAX_PROJECTED_FRONT_MM,
         .width_mm = S5_UNKNOWN_WIDTH,
         .left_mm = left.clearance,
         .right_mm = right.clearance

@@ -50,7 +50,7 @@ Subscriptions use the configured root and these suffixes:
 |---|---:|---|
 | `controller` |25 (v1) / 31 (v2)| versioned startup guard, readiness, normalized IR, target RPM, line age and drop count; see VEHICLE_CONTROLLER.md |
 | `status` |1| Wi-Fi1, broker2, command subscription4, TX drop8, RX drop16 |
-| `ack` |1| START in bit0, RESET in bit2 (neither means STOP); rejected in bit1 |
+| `ack` |1| START in bit 0, rejection or failure in bit 1, RESET in bit 2, completed RESET in bit 3 |
 | `vehicle` |1| state bits0..2, fault mask bits3..7 |
 | `motion` |9| S2_STATUS packed bits: mode0:2, level2:3, faults5:4, L RPM9:9, R RPM18:9, L PWM27:7, R PWM34:7, L progress41:13, R progress54:13 |
 | `line` |1| L/C/R black bits0/1/2, barcode bits3..5 |
@@ -81,13 +81,13 @@ Set `BUDDY1_MOSQUITTO` or `BUDDY1_BROWSER` if executable paths are not discovera
 
 Replace both the dashboard and Pico firmware with matching current versions. A heartbeat confirms network connectivity, not that the motors and sensors are ready. The Vehicle controller panel reports the actual START blocker. Wait at least five seconds after power-up and start on a straight section, not a crossing. Read the named blocker before resetting faults. If it says diagnostics unavailable, the Pico is running older firmware or the topic root does not match. Send the blocker text and IR/target values for diagnosis; a generic one-byte rejected ACK alone cannot identify the cause.
 
-The **Obstacle scan** card shows measured forward distance even when a target is outside the stopping threshold. A measured forward range beyond 35 cm clears the obstacle interlock. Two complete out-of-range pulses within the 30 ms deadline can also clear it. Two matching RCWL-9610A no-target pulses around 47.1 ms can also clear it. Missing and other late echoes keep the interlock blocked. Hold a flat target 40–60 cm straight ahead while the car is stopped to verify the sensor. If the fault stays on, check sensor power, common ground, GP16 trigger, and the 3.3 V ECHO signal at GP17. Use a divider for a 5 V ECHO output. If the panel shows **Stale**, check the Pico’s Wi-Fi and broker connection first.
+The **Obstacle scan** card shows measured forward distance even when a target is outside the stopping threshold. A measured forward range beyond 27 cm clears the obstacle interlock. Two complete out-of-range pulses within the 30 ms deadline can also clear it. Two matching RCWL-9610A no-target pulses around 47.1 ms can also clear it. Missing and other late echoes keep the interlock blocked. Hold a flat target 40–60 cm straight ahead while the car is stopped to verify the sensor. If the fault stays on, check sensor power, common ground, GP16 trigger, and the 3.3 V ECHO signal at GP17. Use a divider for a 5 V ECHO output. If the panel shows **Stale**, check the Pico’s Wi-Fi and broker connection first.
 
 Connect the scan servo to the Robo Pico servo header marked **GP12**. At power-up the firmware holds the servo at its centre pulse and waits 350 ms before ranging. Check that the sensor faces straight ahead at that position. If it points to one side, mark the powered centre position, switch off, and re-seat the servo horn or adjust the sensor bracket. Small corrections can be made with `S5_SERVO_CENTRE_US` in `app_program/subsystem5/subsystem5.h`. To test detection followed by a single width sweep over USB, use the [stationary bench build](../testing/subsystem5/TEST_LOG.md#stationary-hardware-check).
 
 ## Trace obstacle width from the Pico to the dashboard
 
-Open the normal firmware's USB serial console at 115200 baud. A forward reading at 90° confirms the range sensor produced a sample. While following the line, the stop and sweep start at 300 mm or less. A profile needs returns near both sides of a target with a clear reading beyond each edge.
+Open the firmware's USB serial console at 115200 baud. A forward reading at 90° confirms the range sensor produced a sample. While following the line, the controller slows at 350 mm and stops to scan at 220 mm. A profile needs returns near both sides of a target with a clear reading beyond each edge.
 
 - `[S5] scan waiting for drive motors to stop` identifies a motion gate. `GP12 sweep start` means the firmware is commanding the servo. Watch the horn to confirm it moves.
 - `[S5] width unavailable` means no numerical width was calculated. The edge flags show which edges the sweep resolved. The bench build prints the commanded angle and echo for each scan point.
@@ -97,8 +97,10 @@ Open the normal firmware's USB serial console at 115200 baud. A forward reading 
 mosquitto_sub -h BROKER_IP -t 'TOPIC_ROOT/obstacle' -F '%t %x'
 ```
 
-## Reset a motor fault
+## Reset without power cycling
 
-With matching timing/reset firmware, a stopped motor fault enables **Reset fault**. Press it once and wait for the ACK and IDLE state, then press START separately. It never resumes automatically. If a timing fault returns, capture the displayed **Gap / limit** numbers before clearing it. A timing gap over the configured limit still stops the car.
+With matching firmware, **Reset** is available in IDLE or FAULT when the wheels are stopped. For a failed detour, place the car back on the line first. Press Reset once and wait for **Reset complete** and IDLE. Press START separately when the path is clear. The Pico keeps its Wi-Fi and broker sessions during this reset. If a timing fault returns, capture the displayed **Gap / limit** numbers before clearing it.
 
-The command is binary02; accepted RESET ACK04, rejected RESET ACK06. Existing START/STOP bytes are unchanged. Controller diagnostics version2 has31 bytes and adds reset-pending, latched timing gap and limit; older version1/25-byte diagnostics still display but cannot enable RESET. Raw ADC values and total distance remain unreported.
+RESET sends `02`. The Pico replies with `04` for acceptance or `06` for rejection. An accepted reset reports `0C` on completion or `0E` on failure. Controller diagnostics v2 carry the pending flag, latched timing gap and limit in 31 bytes. Version 1 diagnostics can still be displayed.
+
+For cold-start or reconnect timing, compare the USB serial `wifi: link up` and `mqtt: ready for commands` messages. The Pico initiates MQTT as soon as the hotspot gives it an IP and publishes readiness when the broker acknowledges its command subscription.
