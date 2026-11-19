@@ -53,6 +53,9 @@ static unsigned read_at(unsigned index, BOOL verbose, bool fine)
 
         unsigned confirmed = s5_confirm_scan_range(previous, ping.range_mm);
         if (s5_range_available(confirmed)) return confirmed;
+        /* A missed ping can separate two matching measured echoes.
+         * Open space still needs two consecutive results. */
+        if (!s5_range_available(ping.range_mm) && s5_range_measured(previous)) continue;
         if (attempt && !s5_range_available(ping.range_mm)) break;
         previous = ping.range_mm;
     }
@@ -212,15 +215,18 @@ static unsigned bench_wait_for_echo(BOOL want_target)
 
         unsigned range = ping.range_mm;
         bool measured = s5_range_measured(range);
-        bool matches = want_target ? measured && range <= S5_SCAN_STOP_MM :
-                       range == S5_OPEN_RANGE || (measured && range > S5_CLEAR_MM);
-        confirmed = matches ? confirmed + 1u : 0u;
-        if (confirmed == BENCH_CONFIRMATIONS) return range;
-        /* In this motor-off test a missing target can restart the detector. */
         bool timed_out = ping.state == S5_ECHO_QUIET || ping.state == S5_ECHO_FALL_TIMEOUT ||
                          ping.state == S5_ECHO_LATE;
-        timeouts = !want_target && timed_out ? timeouts + 1u : 0u;
-        if (timeouts == BENCH_TIMEOUT_CONFIRMATIONS) {
+        if (!timed_out) timeouts = 0;
+        else if (timeouts < BENCH_TIMEOUT_CONFIRMATIONS) ++timeouts;
+
+        bool matches = want_target ? measured && range <= S5_SCAN_STOP_MM :
+                       range == S5_OPEN_RANGE || (measured && range > S5_CLEAR_MM);
+        if (matches) ++confirmed;
+        else if (!want_target || timeouts != 1u) confirmed = 0;
+        if (confirmed == BENCH_CONFIRMATIONS) return range;
+        /* In this motor-off test a missing target can restart the detector. */
+        if (!want_target && timeouts == BENCH_TIMEOUT_CONFIRMATIONS) {
             tm_printf((UB*)"[S5 BENCH] Three echo timeouts. Restarting target detection.\n");
             return S5_UNKNOWN_RANGE;
         }
@@ -258,7 +264,8 @@ static void bench_print_plan(const S5_PROFILE *profile)
 EXPORT void subsystem5_bench(void)
 {
     tm_printf((UB*)"[S5 BENCH] GP12 servo, GP16 trigger, GP17 echo. Drive outputs off.\n");
-    tm_printf((UB*)"[S5 BENCH] Scan starts after two forward echoes within %u mm.\n", S5_SCAN_STOP_MM);
+    tm_printf((UB*)"[S5 BENCH] Scan needs two forward echoes within %u mm. One timeout is allowed between them.\n",
+              S5_SCAN_STOP_MM);
     setup();
     for (;;) {
         unsigned detected = bench_wait_for_echo(TRUE);
