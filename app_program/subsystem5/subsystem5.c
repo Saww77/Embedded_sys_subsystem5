@@ -22,6 +22,29 @@ static const char *const echo_status[] = {
     [S5_ECHO_NO_TARGET] = "no target",
 };
 
+#if APP_S5_SENSOR_TEST
+EXPORT void subsystem5_sensor_test(void)
+{
+    tm_printf((UB*)"[S5 SENSOR] GP16 trigger, GP17 echo. Hold a flat target in front of the sensor.\n");
+    if (!s5_hw_init_ranging()) {
+        tm_printf((UB*)"[S5 SENSOR] Could not start ultrasonic capture.\n");
+        return;
+    }
+
+    for (;;) {
+        tk_dly_tsk(350);
+        S5_PING ping = s5_hw_ping();
+        if (s5_range_measured(ping.range_mm))
+            tm_printf((UB*)"[S5 SENSOR] range=%u mm pulse=%u us\n",
+                      (unsigned)ping.range_mm, (unsigned)ping.pulse_us);
+        else
+            tm_printf((UB*)"[S5 SENSOR] echo=%s pulse=%u us range=%s\n",
+                      echo_status[ping.state], (unsigned)ping.pulse_us,
+                      ping.range_mm == S5_OPEN_RANGE ? "open" : "unavailable");
+    }
+}
+#endif
+
 static void aim(unsigned angle)
 {
     unsigned change = angle > servo_angle ? angle - servo_angle : servo_angle - angle;

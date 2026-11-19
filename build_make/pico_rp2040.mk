@@ -36,12 +36,28 @@ CONSOLE ?= usb_cdc
 # core-0 polling service task, using the Pico SDK's cyw43 driver.  WIFI=none
 # leaves the radio powered down.
 S5_BENCH ?= 0
+S5_SENSOR_TEST ?= 0
 ifneq ($(S5_BENCH),0)
 ifneq ($(S5_BENCH),1)
 $(error Unknown S5_BENCH '$(S5_BENCH)'; use 0 or 1)
 endif
+endif
+ifneq ($(S5_SENSOR_TEST),0)
+ifneq ($(S5_SENSOR_TEST),1)
+$(error Unknown S5_SENSOR_TEST '$(S5_SENSOR_TEST)'; use 0 or 1)
+endif
+endif
+ifeq ($(S5_BENCH)$(S5_SENSOR_TEST),11)
+$(error Choose either S5_BENCH=1 or S5_SENSOR_TEST=1)
+endif
+S5_STANDALONE := $(filter 1,$(S5_BENCH) $(S5_SENSOR_TEST))
+ifeq ($(S5_STANDALONE),1)
 WIFI ?= none
-S5_BENCH_SUFFIX := _s5bench
+endif
+ifeq ($(S5_BENCH),1)
+S5_SUFFIX := _s5bench
+else ifeq ($(S5_SENSOR_TEST),1)
+S5_SUFFIX := _s5sensor
 endif
 WIFI ?= cyw43
 ifneq ($(filter $(WIFI),none cyw43),$(WIFI))
@@ -97,7 +113,7 @@ $(error Unknown S4 '$(S4)'; use 0 or 1)
 endif
 endif
 S4_ENABLED := $(S4)
-ifeq ($(S5_BENCH),1)
+ifeq ($(S5_STANDALONE),1)
 S4_ENABLED := 0
 else ifeq ($(S4),0)
 S4_SUFFIX := _nos4
@@ -129,9 +145,9 @@ $(error BUDDY1_DEMO=1 requires SMP=1 for Buddy 2 encoder IRQ ownership)
 endif
 DEMO_SUFFIX := _b1demo
 endif
-ifeq ($(S5_BENCH),1)
+ifeq ($(S5_STANDALONE),1)
 ifneq ($(WIFI)-$(NET)-$(MQTT)-$(BUDDY1_DEMO),none-none-0-0)
-$(error S5_BENCH=1 runs the stationary USB bench without Wi-Fi, MQTT or BUDDY1_DEMO)
+$(error Standalone Subsystem 5 tests require WIFI=none NET=none MQTT=0 BUDDY1_DEMO=0)
 endif
 endif
 
@@ -161,7 +177,7 @@ endif
 # only the banner in the log revealed it.
 #
 #EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(TEST_SUFFIX)
-EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(DEMO_SUFFIX)$(S4_SUFFIX)$(TEST_SUFFIX)$(S5_BENCH_SUFFIX)
+EXE_FILE := mtk3pico_smp$(SMP)_$(CONSOLE)$(WIFI_SUFFIX)$(NET_SUFFIX)$(MQTT_SUFFIX)$(CRASH_SUFFIX)$(DEMO_SUFFIX)$(S4_SUFFIX)$(TEST_SUFFIX)$(S5_SUFFIX)
 
 GCC := arm-none-eabi-gcc
 AS := arm-none-eabi-gcc
@@ -223,6 +239,7 @@ ASFLAGS += -DCNF_SMP=1
 endif
 #CFLAGS  += -DAPP_TEST=$(TEST)
 CFLAGS  += -DAPP_TEST=$(TEST) -DAPP_BUDDY1_DEMO=$(BUDDY1_DEMO) -DAPP_S5_BENCH=$(S5_BENCH)
+CFLAGS  += -DAPP_S5_SENSOR_TEST=$(S5_SENSOR_TEST)
 CFLAGS  += -DAPP_S4=$(S4_ENABLED)
 CFLAGS  += -DTM_CONSOLE_UART=$(CRASH_REPORT)
 ifeq ($(CRASH_REPORT),0)
@@ -256,7 +273,7 @@ endif
 # before any recipe executes.
 ################################################################################
 #PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)
-PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)-s5bench$(S5_BENCH)-s4$(S4_ENABLED)
+PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)-s5bench$(S5_BENCH)-s5sensor$(S5_SENSOR_TEST)-s4$(S4_ENABLED)
 PROFILE_FILE := .build_profile
 
 ifneq ($(strip $(shell cat $(PROFILE_FILE) 2>/dev/null)),$(PROFILE_ID))

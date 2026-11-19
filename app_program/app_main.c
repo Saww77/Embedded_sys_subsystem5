@@ -58,7 +58,7 @@
 #ifndef APP_S4
 #define APP_S4 1
 #endif
-#if APP_S5_BENCH
+#if APP_S5_BENCH || APP_S5_SENSOR_TEST
 #include "subsystem2/motion_hw.h"
 #include "subsystem5/subsystem5.h"
 #endif
@@ -119,9 +119,14 @@ EXPORT INT usermain(void)
 	tm_printf((UB*)"single-core build\n");
 #endif
 
-#if APP_S5_BENCH
+#if APP_S5_BENCH || APP_S5_SENSOR_TEST
 	s2_hw_safe_outputs();
+#if APP_S5_SENSOR_TEST
+	subsystem5_sensor_test();
+#else
 	subsystem5_bench();
+#endif
+	tk_slp_tsk(TMO_FEVR);
 #else
 	/* Phase 1: every subsystem creates its kernel objects */
 	CHECK(subsystem1_init(), "subsystem1_init");

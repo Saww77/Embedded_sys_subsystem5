@@ -12,6 +12,12 @@ The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and G
 
 STOP, link or motor faults, stale inputs, and a failed or timed-out search stop the detour. An aborted detour requires fresh IR evidence and a new START. The wheel track, servo direction and sensor-to-axle offset require calibration on the car. Left and right encoders use GP2 and GP3 respectively.
 
+## Ultrasonic sensor test
+
+From the repository root, build with `make -C build_make S5_SENSOR_TEST=1` and flash `build_make/mtk3pico_smp1_usb_cdc_s5sensor.uf2`. The test pings GP16 and measures GP17 while the servo and drive motors remain off. Open USB serial at 115200 and aim the sensor straight at a flat target.
+
+Hold the target 20 cm and then 40 cm from the sensor. Expect the `[S5 SENSOR]` lines to show ranges near 200 mm and 400 mm respectively. Remove the target and point the sensor into open space to check for `echo=no target` and `range=open`. The log also prints raw pulse duration and any timeout or capture fault.
+
 ## Stationary hardware check
 
 For VS Code with the C/C++ extension, open the repository root and select the `Pico W Bench` IntelliSense configuration. If the editor cannot find the compiler, set its Compiler path to the installed `arm-none-eabi-gcc` executable.
@@ -73,6 +79,7 @@ The obstacle and avoidance MQTT packets remain seven bytes and one byte respecti
 | S5-I10 | Scan a scripted target at 280 mm with one unavailable edge bearing | Passed with simulated bench input. The next usable return resolved the edge and the profile reported 48 mm. |
 | S5-U11 | Stop at 300 mm and plan a 390 mm bypass segment with verified side clearance | Passed in controller simulation. |
 | S5-I11 | Detect and profile a target when one timeout separates two valid readings | Passed in a host bench replay. Two timeouts or a farther reading cleared the pending detection. Open-side confirmation still required consecutive open pings. |
+| S5-I12 | Boot the sensor-only test and report measured range, open space and an echo timeout | Pico build and boot-path inspection passed. A host replay printed the expected 200 mm, 400 mm, no-target and timeout reports. Physical ranging is pending. |
 
 Run the controller and planner test from the repository root:
 

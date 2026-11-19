@@ -44,7 +44,16 @@ void s5_hw_echo_irq(void)
     s5_capture_edge(&capture, now, (edges & ECHO_RISE) != 0, (edges & ECHO_FALL) != 0, S5_ECHO_OBSERVE_US);
 }
 
-bool s5_hw_init(void)
+static bool release_reset(unsigned mask)
+{
+    REG32(RESETS_RESET + 0x3000u) = mask;
+    for (unsigned i = 0; i < STARTUP_POLLS; ++i) {
+        if ((REG32(RESETS_RESET_DONE) & mask) == mask) return true;
+    }
+    return false;
+}
+
+bool s5_hw_init_ranging(void)
 {
     gpio_set_val(TRIG_PIN, 0);
     gpio_set_pin(TRIG_PIN, GPIO_MODE_OUT);
@@ -52,31 +61,14 @@ bool s5_hw_init(void)
     /* A connected push-pull output drives idle low. An unplugged input reads high. */
     REG32(GPIO(ECHO_PIN)) = (REG32(GPIO(ECHO_PIN)) & ~GPIO_PDE) | GPIO_PUE;
 
-    const unsigned blocks = RESETS_RESET_PWM | RESETS_RESET_TIMER;
-    REG32(RESETS_RESET + 0x3000u) = blocks;
-    unsigned ready = 0;
-    for (unsigned i = 0; i < STARTUP_POLLS && ready != blocks; ++i)
-        ready = REG32(RESETS_RESET_DONE) & blocks;
-    pwm_ready = (ready & RESETS_RESET_PWM) != 0;
-    if (!pwm_ready) return false;
-
-    pwm_set_enabled(S5_SERVO_PIN, FALSE);
-    REG32(PWM_SERVO) = 0;
-    REG32(PWM_SERVO + 4u) = 125u * 16u; /* 1 us/count at 125 MHz. */
-    REG32(PWM_SERVO + 8u) = 0;
-    pwm_set_wrap(S5_SERVO_PIN, 19999u); /* 50 Hz. */
-    s5_hw_angle(S5_CENTRE_ANGLE);
-    pwm_set_pin(S5_SERVO_PIN);
-    pwm_set_enabled(S5_SERVO_PIN, TRUE);
-
-    if (!(ready & RESETS_RESET_TIMER)) return false;
+    if (!release_reset(RESETS_RESET_TIMER)) return false;
     REG32(0x4005802cu) = 0x20cu;
     REG32(TIMER_PAUSE + 0x3000u) = 1u;
     uint32_t before = MICROS;
     unsigned polls = 0;
     while (MICROS == before && ++polls < STARTUP_POLLS) {}
     if (polls == STARTUP_POLLS) return false;
-#if APP_S5_BENCH
+#if APP_S5_BENCH || APP_S5_SENSOR_TEST
     if (app_gpio_irq_init() < E_OK) return false;
 #endif
     /* In production this task and the shared encoder ISR run on processor 2. */
@@ -91,6 +83,22 @@ bool s5_hw_init(void)
     ECHO_INTR = ECHO_EDGES;
     EI(saved);
     return true;
+}
+
+bool s5_hw_init(void)
+{
+    pwm_ready = release_reset(RESETS_RESET_PWM);
+    if (!pwm_ready) return false;
+
+    pwm_set_enabled(S5_SERVO_PIN, FALSE);
+    REG32(PWM_SERVO) = 0;
+    REG32(PWM_SERVO + 4u) = 125u * 16u; /* 1 us/count at 125 MHz. */
+    REG32(PWM_SERVO + 8u) = 0;
+    pwm_set_wrap(S5_SERVO_PIN, 19999u); /* 50 Hz. */
+    s5_hw_angle(S5_CENTRE_ANGLE);
+    pwm_set_pin(S5_SERVO_PIN);
+    pwm_set_enabled(S5_SERVO_PIN, TRUE);
+    return s5_hw_init_ranging();
 }
 
 void s5_hw_angle(unsigned angle)

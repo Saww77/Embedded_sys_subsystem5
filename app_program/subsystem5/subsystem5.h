@@ -11,5 +11,8 @@
 #if APP_S5_BENCH
 EXPORT void subsystem5_bench(void);
 #endif
+#if APP_S5_SENSOR_TEST
+EXPORT void subsystem5_sensor_test(void);
+#endif
 
 #endif

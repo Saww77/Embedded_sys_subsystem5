@@ -71,7 +71,7 @@ static void io_bank0_handler(UINT intno)
 #if !APP_BUDDY1_DEMO
     s5_hw_echo_irq();
 #endif
-#if !APP_S5_BENCH
+#if !APP_S5_BENCH && !APP_S5_SENSOR_TEST
     s2_encoder_dispatch();
 #endif
 }
