@@ -249,7 +249,27 @@ static void test_bench_background_returns(void)
     S5_PROFILE profile = s5_profile(&scan, S5_CENTRE_INDEX - 10, S5_CENTRE_INDEX + 10,
                                     S5_CENTRE_INDEX, NULL);
     assert(profile.left_edge_valid && profile.right_edge_valid);
-    assert(profile.width_mm == 192 && profile.width_status == S5_WIDTH_OK);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_LEFT_ECHO);
+}
+
+static void test_80_mm_bench_target_with_unstable_corner_ranges(void)
+{
+    const unsigned left[] = {190, 194, 194, 194, 198, 194, 199, 199, 203, 212,
+                             S5_UNKNOWN_RANGE, 630};
+    const unsigned right[] = {190, 189, 190, 194, 194, 194, 194, 198, 207, 1196};
+    S5_SCAN scan = {0};
+    for (unsigned i = 0; i < sizeof(left) / sizeof(*left); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX - i, left[i]);
+    for (unsigned i = 0; i < sizeof(right) / sizeof(*right); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX + i, right[i]);
+    S5_PROFILE profile = s5_profile(&scan, S5_CENTRE_INDEX - 11, S5_CENTRE_INDEX + 9,
+                                    S5_CENTRE_INDEX, NULL);
+    assert(profile.nearest_mm == 189 && profile.left_edge_valid && profile.right_edge_valid);
+    assert(profile.left_mm == 630 && profile.right_mm == 1196);
+    assert(profile.left_edge_mm == -213 && profile.right_edge_mm == 158);
+    /* The prior extrapolation returned 212 mm. The scan has a bracket for
+     * each edge, but the measured end ranges do not locate either corner. */
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_BOTH_ECHOES);
 }
 
 int main(void)
@@ -264,5 +284,6 @@ int main(void)
     test_narrow_face_at_track_distance();
     test_track_left_limit();
     test_bench_background_returns();
+    test_80_mm_bench_target_with_unstable_corner_ranges();
     puts("PASS echo capture, scan packing, dropouts, width, sweep limits and bench background replay");
 }

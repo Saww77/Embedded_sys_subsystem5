@@ -148,10 +148,7 @@ static bool width_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
                             unsigned outer, unsigned inner, int step, unsigned *extent)
 {
     unsigned range = s5_scan_get(scan, outer), supporting = s5_scan_get(scan, inner);
-    if (!s5_same_obstacle(supporting, depth) ||
-        supporting > range + WIDTH_RAY_TOLERANCE_MM ||
-        range > supporting + S5_FINE_REPEAT_TOLERANCE_MM)
-        return false;
+    if (!s5_same_obstacle(supporting, depth)) return false;
 
     bool outermost = outer == edge.last_hit;
     bool on_ray = width_ray_matches(range, outer, depth);
@@ -162,21 +159,12 @@ static bool width_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
         return true;
     }
 
-    if (supporting < depth + WIDTH_MIN_EDGE_RISE_MM) return false;
-    bool stable_corner = supporting <= range + WIDTH_STABLE_CORNER_MM &&
-                         range <= supporting + WIDTH_STABLE_CORNER_MM;
-    if ((!outermost || on_ray) && !stable_corner) return false;
-
-    unsigned lateral = radial_extent_mm(range, depth);
-    unsigned previous = radial_extent_mm(supporting, depth);
-    unsigned gap = (unsigned)(((int)edge.boundary - (int)edge.last_hit) * step);
-    unsigned distance = (unsigned)(((int)outer - (int)inner) * step);
-    /* The neighbour may be more than one step away. Scale the interpolation
-     * to the observed separation, and use the plateau directly if an outer
-     * return was rejected. */
-    *extent = lateral;
-    if (outermost && !on_ray && lateral > previous)
-        *extent += (lateral - previous) * gap / (2u * distance);
+    /* Off-axis returns can include different surfaces as the beam sweeps.
+     * Require two bearings that see the same distance before using slant range. */
+    if (supporting < depth + WIDTH_MIN_EDGE_RISE_MM || supporting > range + WIDTH_STABLE_CORNER_MM ||
+        range > supporting + WIDTH_STABLE_CORNER_MM)
+        return false;
+    *extent = radial_extent_mm(range, depth);
     return true;
 }
 
@@ -184,12 +172,16 @@ static bool width_extent_mm(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
                             int step, unsigned *extent)
 {
     unsigned edge_steps = angle_steps(edge.last_hit);
+    unsigned last_range = s5_scan_get(scan, edge.last_hit);
     for (unsigned i = 0; i < WIDTH_EDGE_CANDIDATES && i < edge_steps; ++i) {
         unsigned outer = (unsigned)((int)edge.last_hit - (int)i * step);
         unsigned range = s5_scan_get(scan, outer);
         if (!s5_same_obstacle(range, depth) || range < depth + WIDTH_MIN_EDGE_RISE_MM ||
             range > face_ray_range(outer, depth) + WIDTH_RAY_TOLERANCE_MM)
             continue;
+        /* An inner pair can replace a closer face echo at the last bearing.
+         * It cannot explain a substantially farther last hit. */
+        if (last_range > range + WIDTH_STABLE_CORNER_MM) continue;
         for (unsigned gap = 1; gap <= WIDTH_MAX_SUPPORT_GAP && i + gap <= edge_steps; ++gap) {
             unsigned inner = (unsigned)((int)outer - (int)gap * step);
             if (width_from_pair(scan, edge, depth, outer, inner, step, extent)) return true;
