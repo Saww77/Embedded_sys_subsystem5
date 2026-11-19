@@ -222,6 +222,36 @@ static void test_track_left_limit(void)
     }
 }
 
+static void test_bench_background_returns(void)
+{
+    const unsigned mixed_at_135[] = {486, 2000, 231, 2009, 829};
+    const unsigned distant_at_140[] = {2005, 821, 2005, 800, 2013};
+    const unsigned repeated_at_145[] = {1996, S5_UNKNOWN_RANGE, 1997, S5_UNKNOWN_RANGE, S5_UNKNOWN_RANGE};
+    const unsigned scattered_open[] = {S5_OPEN_RANGE, S5_UNKNOWN_RANGE, S5_OPEN_RANGE, S5_UNKNOWN_RANGE, S5_OPEN_RANGE};
+    const unsigned confirmed_open[] = {S5_UNKNOWN_RANGE, S5_OPEN_RANGE, S5_OPEN_RANGE, S5_UNKNOWN_RANGE, S5_UNKNOWN_RANGE};
+    assert(s5_edge_background(mixed_at_135, 5, 197) == S5_UNKNOWN_RANGE);
+    assert(s5_edge_background(distant_at_140, 5, 197) == 800);
+    assert(s5_edge_background(repeated_at_145, 5, 197) == 1996);
+    assert(s5_edge_background(scattered_open, 5, 197) == S5_UNKNOWN_RANGE);
+    assert(s5_edge_background(confirmed_open, 5, 197) == S5_OPEN_RANGE);
+
+    /* Even agreeing background echoes cannot hide a later near return. */
+    const unsigned late_near[] = {800, 801, 820, 845, 231};
+    assert(s5_edge_background(late_near, 5, 197) == S5_UNKNOWN_RANGE);
+
+    const unsigned bench_sweep[] = {218, 209, 204, 200, 200, 200, 199, 199, 197,
+                                    195, 195, 195, 195, 199, 204, 199, 203, 208, 917};
+    S5_SCAN scan = {0};
+    for (unsigned i = 0; i < sizeof(bench_sweep) / sizeof(*bench_sweep); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX - 8 + i, bench_sweep[i]);
+    s5_scan_set(&scan, S5_CENTRE_INDEX - 9, s5_edge_background(mixed_at_135, 5, 197));
+    s5_scan_set(&scan, S5_CENTRE_INDEX - 10, s5_edge_background(distant_at_140, 5, 197));
+    S5_PROFILE profile = s5_profile(&scan, S5_CENTRE_INDEX - 10, S5_CENTRE_INDEX + 10,
+                                    S5_CENTRE_INDEX, NULL);
+    assert(profile.left_edge_valid && profile.right_edge_valid);
+    assert(profile.width_mm == 192 && profile.width_status == S5_WIDTH_OK);
+}
+
 int main(void)
 {
     test_echo_pairing();
@@ -233,5 +263,6 @@ int main(void)
     test_box_width_with_wide_beam();
     test_narrow_face_at_track_distance();
     test_track_left_limit();
-    puts("PASS echo capture, scan packing, dropouts, narrow-face width and track sweep limits");
+    test_bench_background_returns();
+    puts("PASS echo capture, scan packing, dropouts, width, sweep limits and bench background replay");
 }

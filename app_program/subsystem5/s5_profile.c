@@ -2,6 +2,7 @@
 
 #define MAX_WIDTH_MM 2000
 #define MAX_EDGE_BRACKET_STEPS 2u
+#define MIN_DISTANT_ECHOES 3u
 #define WIDTH_RAY_TOLERANCE_MM 8u
 #define WIDTH_MIN_EDGE_RISE_MM 3u
 #define WIDTH_FACE_TOLERANCE_MM 12u
@@ -88,6 +89,27 @@ bool s5_background_beyond(unsigned range, unsigned reference)
 {
     return range == S5_OPEN_RANGE ||
            (s5_range_measured(range) && range > reference + S5_PROFILE_TOLERANCE_MM);
+}
+
+unsigned s5_edge_background(const unsigned *ranges, unsigned count, unsigned reference)
+{
+    unsigned shortest = S5_UNKNOWN_RANGE;
+    unsigned previous = S5_UNKNOWN_RANGE;
+    unsigned distant_echoes = 0;
+    bool repeated = false;
+    for (unsigned i = 0; i < count; ++i) {
+        unsigned range = ranges[i];
+        if (s5_range_measured(range)) {
+            /* A single near return leaves the bearing in the edge bracket. */
+            if (!s5_background_beyond(range, reference)) return S5_UNKNOWN_RANGE;
+            ++distant_echoes;
+        }
+        if (s5_range_available(s5_confirm_scan_range(previous, range))) repeated = true;
+        if (s5_range_available(range) && range < shortest) shortest = range;
+        if (s5_range_available(range) || !s5_range_measured(previous)) previous = range;
+    }
+    /* Beyond the edge, separate reflectors can produce different distances. */
+    return repeated || distant_echoes >= MIN_DISTANT_ECHOES ? shortest : S5_UNKNOWN_RANGE;
 }
 
 typedef struct {

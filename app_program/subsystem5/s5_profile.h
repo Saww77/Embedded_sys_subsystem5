@@ -60,6 +60,8 @@ unsigned s5_scan_get(const S5_SCAN *scan, unsigned index);
 unsigned s5_scan_target(const S5_SCAN *scan);
 bool s5_same_obstacle(unsigned range, unsigned reference);
 bool s5_background_beyond(unsigned range, unsigned reference);
+/* Confirm a background bearing from the full fine-scan sample window. */
+unsigned s5_edge_background(const unsigned *ranges, unsigned count, unsigned reference);
 /* Optionally reports the lateral span between the outermost target echoes. */
 S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor,
                       unsigned *observed_span_mm);
