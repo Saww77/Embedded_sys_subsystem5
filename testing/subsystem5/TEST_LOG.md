@@ -2,46 +2,42 @@
 
 ## Integration
 
-The Pico W scan task owns GP16 (trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo output on slice 6A). Startup holds the calibrated centre pulse and waits 350 ms before ranging. Align the sensor to point straight ahead at that pulse. The hardware counts echo width on PWM slice 0B while the scan task sleeps.
+The scan task owns GP16 (10 µs trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on core 1. The ISR pairs rising and falling edges against each trigger's 30 ms deadline. A missing, late or malformed echo makes that bearing unavailable. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
 
-During line following a valid forward return within 300 mm caps approach targets at 20 RPM. At 150 mm or below the controller stops, waits for the wheels to settle, and requests a coarse sweep followed by a fine scan around the forward obstacle. The scan estimates width from the lateral edges of the clustered returns and reports the adjacent side ranges.
+1. The forward monitor caps approach targets at 20 RPM within 300 mm. At or below 150 mm the controller stops the drive, waits for the wheels to settle, then sweeps 30°, 60°, 90°, 120°, and 150°.
+2. If an obstacle lies within 200 mm, the fine scan returns to its bearing. A forward hit takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan expands in 5° steps until it brackets each edge or runs out of usable readings.
+3. The profile reports nearest distance and bearing, projected width when both edges resolve, and the ranges beyond the left and right edges. A missing echo leaves the corresponding clearance unknown.
+4. The planner continues after a clear sweep and a fresh forward and line check. With an obstacle, it picks a side with clearance for the car and executes encoder-bounded turns, offset and bypass. If neither side qualifies, it can reverse 30 mm once along the approach and request a new sweep. Reverse requires at least 600 ms of recent straight line following with both measured wheel speeds at or above 20 RPM and fresh line and range data. The car has forward ultrasonic coverage, so reverse relies on the recently driven path. The vehicle stops when a permitted retry or route is unavailable.
+5. If the inward corridor is blocked, the vehicle can pass farther in short increments up to 300 mm along the track. It accepts two distinct IR hits after encoder progress reaches the expected line vicinity. Both outer sensors can detect the line together during the perpendicular crossing. The vehicle stops, drives the sensor-to-axle offset, pivots to the original heading, and checks fresh line and range data before handing back control. In the stock two-sensor configuration, both outer sensors must read white at handoff after a confirmed crossing. With GP27 enabled, the centre sensor must see the line.
 
-The controller chooses the side with the larger measured clearance among routes with space for the vehicle and the estimated obstacle edge. It turns out, drives the calculated offset, realigns parallel to the original line, and passes the obstacle using 36 RPM encoder-bounded segments. It checks each heading before moving. If the return corridor is blocked, it can pass farther in short increments up to 300 mm total along the track. Two distinct IR detections during the bounded inward search trigger a stop, sensor-to-axle centering move and pivot back to the track heading. After a valid clear reading on the final heading, it resumes line following.
-
-Two ordinary no-target pings count as open space for line following and detour clearance after the sensor has produced a complete ECHO pulse at least once since boot. A complete out-of-range pulse also proves that the sensor responded. Before that proof, an idle-low pin with no pulse remains blocked. A stuck-high echo or overdue range sample blocks motion. Check range readings against a known target during bench validation.
-
-STOP, stale inputs, motor faults, unconfirmed clearance, and a failed or timed-out line search end the detour stopped. An aborted detour requires fresh IR evidence and a new START. Calibrate the effective wheel track, servo direction and sensor-to-axle offset on the car before evaluating the track metrics.
-
-Encoder pulse inputs follow the updated report. Left uses GP2 and right uses GP3.
+STOP, link or motor faults, stale inputs, and a failed or timed-out search stop the detour. An aborted detour requires fresh IR evidence and a new START. The wheel track, servo direction and sensor-to-axle offset require calibration on the car. Left and right encoders use GP2 and GP3 respectively.
 
 ## Stationary hardware check
 
 With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It holds GP12 at 90° until the ultrasonic sensor reports two consecutive valid ranges at or below 200 mm. It runs one production sweep and width calculation, then centres the servo. Remove the target or move it beyond 250 mm until the log says `Test rearmed`. USB serial at 115200 prints the detection, commanded angles, raw echoes and estimated width.
 
-For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, move a narrow flat-front box to 12–15 cm directly ahead with clear space on both sides. A resolved profile prints `width=… mm`. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
+For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, move a narrow flat-front box to 12–15 cm directly ahead. Place a farther reflecting surface behind it so both edge bearings have a valid return within the echo deadline. A resolved profile prints `width=… mm`. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 
-| Field | Range | Bits in MQTT |
-|---|---|---:|
-| Closest range | 0–4000 mm | 12 |
-| Estimated width | 0–2000 mm, 2047 unavailable | 11 |
-| Left and right clearance | 0–4000 mm, 4095 unavailable | 12 each |
-| Scan angle | 30–150°, transmitted as 0–120 | 7 |
-| Ultrasonic echo fault | Flag in existing vehicle fault mask | 1 |
-| Detour phase | 0–13 | 4 |
-| Detour side | 0 none, 1 left, 2 right | 2 |
+| Field | Range | Representation |
+|---|---|---|
+| Captured pulse and state | 0–29,999 µs, 5 capture states | 15 and 3 bits in ISR capture; 15 and 2 bits for the task sample and its four outcomes |
+| Trigger, rise and freshness timestamps | 0–2³² − 1 µs or ms, rolling | 32 bits each, using wrap-safe elapsed time |
+| Sweep range and closest distance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits per entry and closest-distance field; 12 bits on wire for measured distance |
+| Sweep bearing | 30°–150° in 5° steps | Implicit scan index 0–24; profile and wire store degrees minus 30 in 7 bits |
+| Estimated width | 0–2000 mm, 2047 unavailable | 11 bits in the profile and on wire |
+| Left and right clearance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits each; MQTT carries measured values or 4095 |
+| Left and right lateral bounds | Signed displacement up to ±3464 mm | Signed 13 bits and one validity bit per bound |
+| Forward interlock status | Open confirmation and blocked flags | 1 bit each in the range gate |
+| Ultrasonic echo fault | Set or clear | 1 bit in the vehicle fault mask |
+| Detour phase and side | 0–14, none/left/right | 4 and 2 bits in RAM and the low six bits of the MQTT avoidance byte |
+| Movement request and reply | 6 planner actions, 5 reply states | 3 bits each in the planner |
+| Travel, pass distance and axle offset | 0–511 mm | 9 bits each in planner storage |
+| Crossing count, reverse authorization and input flags | 0–2 crossing samples, boolean flags | 2-bit count and one bit per flag |
+| Motion queue maneuver argument | Forward 1–2000, pivots 2048–2049, reverse 2050–4049 | Existing 12-bit argument within a 16-bit command |
 
-The profile packet grew from six bytes to seven bytes to carry the measured angle. The dashboard accepts both lengths. The producer and MQTT task share a mutex-protected vehicle snapshot. The on-wire encoding uses shifts and masks, independent of C bit-field layout.
-
-For identical MQTT builds with Arm GCC 14.2.1 and SDK 2.2.0, ELF section sizes were:
-
-| Build | Text | Data | BSS |
-|---|---:|---:|---:|
-| ZIP baseline | 366,664 B | 112 B | 82,780 B |
-| Initial Subsystem 5 profiling build | 368,726 B | 112 B | 82,772 B |
-
-The ELF counts cover static sections. The scan task also uses a kernel-allocated 2,048-byte stack at runtime.
+The obstacle and avoidance MQTT packets remain seven bytes and one byte respectively. The dashboard also accepts legacy six-byte obstacle packets. A motion command remains two bytes with a separate queue timestamp. The ISR and scan task share capture state on one core. The task arms and drains it with local interrupts masked. Vehicle snapshots shared with MQTT are mutex-protected.
 
 ## Results
 
@@ -76,4 +72,37 @@ cc -std=c11 -Wall -Wextra -Werror testing/subsystem5/test_avoidance.c \
   app_program/subsystem5/s5_avoid.c app_program/vehicle_controller/vehicle_core.c \
   -o /tmp/test_avoidance
 /tmp/test_avoidance
+```
+
+## Workflow revision verification
+
+Results on 19 November 2026 for firmware commit 4ae863a. The table above retains earlier test history. The current echo deadline supersedes the historical silence and late-pulse behavior.
+
+| Check | Result |
+|---|---|
+| Host scan and echo regression | Passed with undefined-behavior and bounds sanitizers. Covers packed samples, off-centre/high-angle targets, clipped profiles, and late, out-of-order and simultaneous edges. |
+| Host controller and planner regression | Passed with the same sanitizers. Covers both detours, bounded reverse and rescanning, clear path continuation, rejecting old scans, and confirmation of line crossing and handoff. |
+| Dashboard unit suite | All 26 tests passed, including the reverse phase in the existing avoidance byte. |
+| Pico MQTT, stationary bench and UART self-test firmware | All three linked and generated UF2 files. |
+| Optional Buddy 1 demo profile | Both baseline and revised trees failed to link because the demo source list omits the vehicle controller referenced by telemetry. |
+| Pico bench and track | Pending physical GP12/GP16/GP17, echo accuracy and open-track behavior, concurrency timing, and left/right bypass and recovery measurements. |
+
+[Host test output](logs/2026-11-19_host.txt)
+
+The static section comparison uses the same Pico SDK 2.2.0 and Arm GCC 14.2.1 MQTT configuration for both commits.
+
+| Build | Text | Data | BSS | Static RAM (data + BSS) |
+|---|---:|---:|---:|---:|
+| 5e667d1 baseline | 359,812 B | 112 B | 82,720 B | 82,832 B |
+| 4ae863a workflow revision | 361,764 B | 112 B | 82,736 B | 82,848 B |
+
+The sweep array shrank from 50 to 38 bytes. Arm layout checks show the avoidance input shrinking from 44 to 32 bytes and its output from 8 to 2 bytes. The allocated scan task stack stays at 2,048 bytes. Static RAM grew by 16 bytes with the edge-capture and retrace state. These measurements cover representation and build size. Measure scan timing, motor-loop latency and recovery accuracy on the robot before recording system performance.
+
+Run the scan and echo regression from the repository root:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror testing/subsystem5/test_scan.c \
+  app_program/subsystem5/s5_profile.c -o /tmp/test_s5_scan
+/tmp/test_s5_scan
+python -m unittest discover -s dashboard/tests
 ```
