@@ -246,6 +246,24 @@ static S5_MOTION maneuver_result(void)
     return S5_MOTION_DONE;
 }
 
+static const char *const avoidance_phase_name[] = {
+    [S5_OFF] = "idle",
+    [S5_PROFILE_PATH] = "stopped for obstacle scan",
+    [S5_TURN_OUT] = "turning off the line",
+    [S5_SHIFT_OUT] = "moving sideways",
+    [S5_ALIGN_OUTSIDE] = "aligning for bypass",
+    [S5_PASS] = "passing obstacle",
+    [S5_TURN_IN] = "turning toward original line",
+    [S5_FIND_LINE] = "searching for the line",
+    [S5_CENTER_LINE] = "line found, centring axle",
+    [S5_ALIGN_LINE] = "realigning with the line",
+    [S5_ALIGN_RETRY] = "aligning to pass farther",
+    [S5_COMPLETE] = "line reacquired, resuming line following",
+    [S5_FAILED] = "detour stopped",
+    [S5_CHECK_LINE] = "checking line and forward range",
+    [S5_BACK_UP] = "reversing for another scan",
+};
+
 static void vehicle_service_once(void)
 {
     S5_MOTION motion = maneuver_result();
@@ -316,6 +334,9 @@ static void vehicle_service_once(void)
     vc_core_step(&model, &in, &out);
     S5_PHASE phase = model.avoidance.phase;
     unsigned side = model.avoidance.side;
+    unsigned offset = model.avoidance.offset_mm;
+    unsigned pass = model.avoidance.next_pass_mm;
+    unsigned reason = model.reason;
     bool active = detouring();
     if (phase == S5_PROFILE_PATH && previous != phase) full_profile_valid = FALSE;
     data.state = model.state;
@@ -361,9 +382,16 @@ static void vehicle_service_once(void)
         }
     }
 
-    if (previous != phase)
-        tm_printf((UB*)"[S5] avoidance phase=%u side=%u at %u ms\n",
-                  (unsigned)phase, side, (unsigned)now);
+    if (previous != phase) {
+        tm_printf((UB*)"[S5] avoidance phase=%u side=%u at %u ms: %s\n",
+                  (unsigned)phase, side, (unsigned)now, avoidance_phase_name[phase]);
+        if (phase == S5_TURN_OUT)
+            tm_printf((UB*)"[S5] bypass side=%s offset=%u mm pass=%u mm\n",
+                      side == S5_LEFT ? "left" : "right", offset, pass);
+        if (phase == S5_FAILED)
+            tm_printf((UB*)"[S5] stopped during %s, vehicle reason=%u\n",
+                      avoidance_phase_name[previous], reason);
+    }
 }
 static void vehicle_task(INT stacd,void *exinf)
 {

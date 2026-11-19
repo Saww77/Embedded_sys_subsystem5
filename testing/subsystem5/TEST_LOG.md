@@ -12,6 +12,13 @@ The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and G
 
 STOP, link or motor faults, stale inputs, and a failed or timed-out search stop the detour. An aborted detour requires fresh IR evidence and a new START. The wheel track, servo direction and sensor-to-axle offset require calibration on the car. Left and right encoders use GP2 and GP3 respectively.
 
+## Full avoidance track test
+
+1. Build from the repository root with `make -C build_make WIFI=none` and flash `build_make/mtk3pico_smp1_usb_cdc_nos4.uf2`. This motor-enabled build automatically starts when the drive is ready and the line and forward range are valid and clear. Place the robot on the line before restarting it. Open USB serial at 115200.
+2. Use a straight line with enough space on both sides for the planned offset. Put a stable, flat-front obstacle across the line far enough ahead for the robot to start following before reaching the 300 mm stop threshold. Watch that it stops before sweeping. The console reports which side it chooses and the planned offset and pass distances.
+3. Check that it pivots away, leaves the line, drives past the obstacle, turns back, finds the line with the IR sensors, aligns with the original heading, and resumes following. Look for `line reacquired, resuming line following`. Repeat with clear space on the opposite side to check the other route. A bounded stop is expected when neither route qualifies or the robot cannot confirm the line.
+4. Record the phase log and where the robot actually stopped or rejoined. The track test is complete when both routes return to the line without contacting the obstacle and the blocked-route case stops.
+
 ## Ultrasonic sensor test
 
 From the repository root, build with `make -C build_make S5_SENSOR_TEST=1` and flash `build_make/mtk3pico_smp1_usb_cdc_s5sensor.uf2`. The test pings GP16 and measures GP17 while the servo and drive motors remain off. Open USB serial at 115200 and aim the sensor straight at a flat target.
