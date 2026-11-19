@@ -28,13 +28,12 @@ static inline unsigned s5_scan_bearing(unsigned index)
 }
 
 typedef enum {
-    S5_WIDTH_OK, S5_WIDTH_FACE, S5_WIDTH_LEFT_EDGE, S5_WIDTH_RIGHT_EDGE,
-    S5_WIDTH_BOTH_EDGES, S5_WIDTH_LEFT_ECHO, S5_WIDTH_RIGHT_ECHO, S5_WIDTH_BOTH_ECHOES,
+    S5_WIDTH_OK, S5_WIDTH_LEFT_EDGE, S5_WIDTH_RIGHT_EDGE, S5_WIDTH_BOTH_EDGES, S5_WIDTH_UNRESOLVED,
 } S5_WIDTH_STATUS;
 
 typedef struct {
     unsigned nearest_mm : 12;
-    unsigned width_mm : 11; /* Flat-face estimate from the centre and edge echoes. */
+    unsigned width_mm : 11; /* Distance between the two obstacle edge echoes. */
     unsigned front_mm : 9; /* Nearest longitudinal projection, capped at 511 mm. */
     unsigned left_mm : 12;
     unsigned right_mm : 12;

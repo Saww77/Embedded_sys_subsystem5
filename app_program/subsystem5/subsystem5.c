@@ -30,13 +30,10 @@ static const char *const echo_status[] = {
 };
 static const char *const width_status[] = {
     [S5_WIDTH_OK] = "no width estimate",
-    [S5_WIDTH_FACE] = "no consistent forward face",
     [S5_WIDTH_LEFT_EDGE] = "no verified background near left edge",
     [S5_WIDTH_RIGHT_EDGE] = "no verified background near right edge",
     [S5_WIDTH_BOTH_EDGES] = "no verified background near either edge",
-    [S5_WIDTH_LEFT_ECHO] = "left corner ranges do not agree",
-    [S5_WIDTH_RIGHT_ECHO] = "right corner ranges do not agree",
-    [S5_WIDTH_BOTH_ECHOES] = "corner ranges do not identify a width",
+    [S5_WIDTH_UNRESOLVED] = "edge echoes do not give a width within 1 to 2000 mm",
 };
 
 #if APP_S5_SENSOR_TEST
