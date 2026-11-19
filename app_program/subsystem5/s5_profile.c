@@ -3,7 +3,11 @@
 #define MAX_WIDTH_MM 2000
 #define MAX_EDGE_BRACKET_STEPS 2u
 #define WIDTH_RAY_TOLERANCE_MM 8u
-#define WIDTH_MIN_EDGE_RISE_MM 5u
+#define WIDTH_MIN_EDGE_RISE_MM 3u
+#define WIDTH_FACE_TOLERANCE_MM 12u
+#define WIDTH_STABLE_CORNER_MM 6u
+#define WIDTH_EDGE_CANDIDATES 3u
+#define WIDTH_MAX_SUPPORT_GAP 3u
 
 _Static_assert(S5_CLEAR_MM <= S5_MAX_PROJECTED_FRONT_MM, "Front projection must cover the obstacle window");
 
@@ -105,42 +109,87 @@ static unsigned face_ray_range(unsigned bearing, unsigned face_depth)
     return (face_depth * 1024u + projection / 2u) / projection;
 }
 
-/* Estimate one side of a flat face whose confirmed centre echo gives its
- * perpendicular depth. The echo can come from anywhere inside the beam. */
-static bool width_extent_mm(const S5_SCAN *scan, S5_EDGE edge, unsigned face_depth,
-                            int step, unsigned *extent)
+static bool width_ray_matches(unsigned range, unsigned bearing, unsigned face_depth)
 {
-    if (edge.last_hit == S5_CENTRE_INDEX) return false;
-    unsigned inner = (unsigned)((int)edge.last_hit - step);
-    unsigned range = s5_scan_get(scan, edge.last_hit);
-    unsigned inner_range = s5_scan_get(scan, inner);
-    unsigned expected = face_ray_range(edge.last_hit, face_depth);
-    if (!s5_same_obstacle(inner_range, face_depth) || range < face_depth + WIDTH_MIN_EDGE_RISE_MM ||
-        range + WIDTH_RAY_TOLERANCE_MM < inner_range || range > expected + WIDTH_RAY_TOLERANCE_MM)
+    unsigned expected = face_ray_range(bearing, face_depth);
+    return range + WIDTH_RAY_TOLERANCE_MM >= expected &&
+           range <= expected + WIDTH_RAY_TOLERANCE_MM;
+}
+
+/* A repeated corner echo can be visible at multiple aimed angles. With
+ * limited angular evidence, use two ranges that locate the same corner. */
+static bool width_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
+                            unsigned outer, unsigned inner, int step, unsigned *extent)
+{
+    unsigned range = s5_scan_get(scan, outer), supporting = s5_scan_get(scan, inner);
+    if (!s5_same_obstacle(supporting, depth) ||
+        supporting > range + WIDTH_RAY_TOLERANCE_MM ||
+        range > supporting + S5_FINE_REPEAT_TOLERANCE_MM)
         return false;
 
-    if (range + WIDTH_RAY_TOLERANCE_MM >= expected) {
-        unsigned inner_expected = face_ray_range(inner, face_depth);
-        if (inner_range + WIDTH_RAY_TOLERANCE_MM < inner_expected ||
-            inner_range > inner_expected + WIDTH_RAY_TOLERANCE_MM)
-            return false;
-        /* Adjacent readings agree with the aimed rays. Centre the edge in
-         * the hit-to-background bracket on the confirmed face plane. */
-        int last = edge_bound_mm(edge.last_hit, face_depth);
-        int beyond = edge_bound_mm(edge.boundary, face_depth);
+    bool outermost = outer == edge.last_hit;
+    bool on_ray = width_ray_matches(range, outer, depth);
+    if (outermost && on_ray && width_ray_matches(supporting, inner, depth)) {
+        int last = edge_bound_mm(edge.last_hit, depth);
+        int beyond = edge_bound_mm(edge.boundary, depth);
         *extent = (unsigned)((last + beyond) * step + 1) / 2u;
         return true;
     }
 
-    /* A short off-axis echo cannot be on the aimed ray at this depth.
-     * Use slant range to the face, interpolating half a bracket step from
-     * the measured inward neighbour. Reject abrupt jumps between echoes. */
-    if (range > inner_range + S5_FINE_REPEAT_TOLERANCE_MM) return false;
-    unsigned lateral = radial_extent_mm(range, face_depth);
-    unsigned previous = radial_extent_mm(inner_range, face_depth);
+    if (supporting < depth + WIDTH_MIN_EDGE_RISE_MM) return false;
+    bool stable_corner = supporting <= range + WIDTH_STABLE_CORNER_MM &&
+                         range <= supporting + WIDTH_STABLE_CORNER_MM;
+    if ((!outermost || on_ray) && !stable_corner) return false;
+
+    unsigned lateral = radial_extent_mm(range, depth);
+    unsigned previous = radial_extent_mm(supporting, depth);
     unsigned gap = (unsigned)(((int)edge.boundary - (int)edge.last_hit) * step);
-    *extent = lateral + (lateral > previous ? (lateral - previous) * gap / 2u : 0);
+    unsigned distance = (unsigned)(((int)outer - (int)inner) * step);
+    /* The neighbour may be more than one step away. Scale the interpolation
+     * to the observed separation, and use the plateau directly if an outer
+     * return was rejected. */
+    *extent = lateral;
+    if (outermost && !on_ray && lateral > previous)
+        *extent += (lateral - previous) * gap / (2u * distance);
     return true;
+}
+
+static bool width_extent_mm(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
+                            int step, unsigned *extent)
+{
+    unsigned edge_steps = angle_steps(edge.last_hit);
+    for (unsigned i = 0; i < WIDTH_EDGE_CANDIDATES && i < edge_steps; ++i) {
+        unsigned outer = (unsigned)((int)edge.last_hit - (int)i * step);
+        unsigned range = s5_scan_get(scan, outer);
+        if (!s5_same_obstacle(range, depth) || range < depth + WIDTH_MIN_EDGE_RISE_MM ||
+            range > face_ray_range(outer, depth) + WIDTH_RAY_TOLERANCE_MM)
+            continue;
+        for (unsigned gap = 1; gap <= WIDTH_MAX_SUPPORT_GAP && i + gap <= edge_steps; ++gap) {
+            unsigned inner = (unsigned)((int)outer - (int)gap * step);
+            if (width_from_pair(scan, edge, depth, outer, inner, step, extent)) return true;
+        }
+    }
+    return false;
+}
+
+static unsigned width_face_depth(const S5_SCAN *scan, S5_EDGE left, S5_EDGE right, unsigned reference)
+{
+    if (left.last_hit > S5_CENTRE_INDEX || right.last_hit < S5_CENTRE_INDEX)
+        return S5_UNKNOWN_RANGE;
+    unsigned centre = s5_scan_get(scan, S5_CENTRE_INDEX);
+    if (s5_same_obstacle(centre, reference)) return centre;
+    if (s5_range_available(centre) || left.last_hit == S5_CENTRE_INDEX ||
+        right.last_hit == S5_CENTRE_INDEX)
+        return S5_UNKNOWN_RANGE;
+
+    unsigned left_range = s5_scan_get(scan, S5_CENTRE_INDEX - 1);
+    unsigned right_range = s5_scan_get(scan, S5_CENTRE_INDEX + 1);
+    if (!s5_same_obstacle(left_range, reference) || !s5_same_obstacle(right_range, reference) ||
+        left_range > right_range + WIDTH_STABLE_CORNER_MM ||
+        right_range > left_range + WIDTH_STABLE_CORNER_MM)
+        return S5_UNKNOWN_RANGE;
+    /* The symmetric adjacent returns give the face depth if centre missed. */
+    return project_forward_mm(S5_CENTRE_INDEX - 1, (left_range + right_range + 1u) / 2u);
 }
 
 static S5_EDGE profile_edge(const S5_SCAN *scan, unsigned anchor, unsigned limit, int step)
@@ -200,15 +249,27 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     int right_hit = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit));
     int span = right_hit - left_hit;
     if (observed_span_mm) *observed_span_mm = span > 0 ? (unsigned)span : 0u;
-    /* The measured width is independent of the conservative motion bounds.
-     * A nearer, conflicting echo or an off-centre anchor lacks a good face reference. */
-    unsigned left_extent, right_extent;
-    if (result.left_edge_valid && result.right_edge_valid && anchor == S5_CENTRE_INDEX &&
-        result.nearest_mm + WIDTH_RAY_TOLERANCE_MM >= reference &&
-        width_extent_mm(scan, left, reference, -1, &left_extent) &&
-        width_extent_mm(scan, right, reference, 1, &right_extent)) {
-        unsigned width = left_extent + right_extent;
-        if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = width;
+    /* The width estimate is independent of the conservative motion bounds. */
+    if (!result.left_edge_valid || !result.right_edge_valid) {
+        result.width_status = result.left_edge_valid ? S5_WIDTH_RIGHT_EDGE :
+                              result.right_edge_valid ? S5_WIDTH_LEFT_EDGE : S5_WIDTH_BOTH_EDGES;
+        return result;
     }
+    unsigned depth = width_face_depth(scan, left, right, reference);
+    if (!s5_range_measured(depth) || result.nearest_mm + WIDTH_FACE_TOLERANCE_MM < depth) {
+        result.width_status = S5_WIDTH_FACE;
+        return result;
+    }
+    unsigned left_extent, right_extent;
+    bool left_known = width_extent_mm(scan, left, depth, -1, &left_extent);
+    bool right_known = width_extent_mm(scan, right, depth, 1, &right_extent);
+    if (!left_known || !right_known) {
+        result.width_status = left_known ? S5_WIDTH_RIGHT_ECHO :
+                              right_known ? S5_WIDTH_LEFT_ECHO : S5_WIDTH_BOTH_ECHOES;
+        return result;
+    }
+    unsigned width = left_extent + right_extent;
+    if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = width;
+    else result.width_status = S5_WIDTH_BOTH_ECHOES;
     return result;
 }

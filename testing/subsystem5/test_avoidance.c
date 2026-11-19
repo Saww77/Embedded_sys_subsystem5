@@ -234,6 +234,11 @@ static void test_width_and_diagonal_clearance(void)
     scan = obstacle(true);
     scan.left_path_mm = S5_UNKNOWN_RANGE;
     assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_RIGHT);
+
+    scan.front_mm = 215;
+    scan.left_path_mm = 235;
+    scan.right_path_mm = 222;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_SIDE);
 }
 
 static void test_stationary_retry(void)

@@ -27,6 +27,16 @@ static const char *const echo_status[] = {
     [S5_ECHO_LATE] = "late fall",
     [S5_ECHO_NO_TARGET] = "no target",
 };
+static const char *const width_status[] = {
+    [S5_WIDTH_OK] = "no width estimate",
+    [S5_WIDTH_FACE] = "no consistent forward face",
+    [S5_WIDTH_LEFT_EDGE] = "no verified background near left edge",
+    [S5_WIDTH_RIGHT_EDGE] = "no verified background near right edge",
+    [S5_WIDTH_BOTH_EDGES] = "no verified background near either edge",
+    [S5_WIDTH_LEFT_ECHO] = "left corner ranges do not agree",
+    [S5_WIDTH_RIGHT_ECHO] = "right corner ranges do not agree",
+    [S5_WIDTH_BOTH_ECHOES] = "corner ranges do not identify a width",
+};
 
 #if APP_S5_SENSOR_TEST
 EXPORT void subsystem5_sensor_test(void)
@@ -179,9 +189,14 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     tm_printf((UB*)"%s 45-degree path L=%u mm R=%u mm (4094=open, 4095=unavailable)\n",
               tag, (unsigned)profile->left_path_mm, (unsigned)profile->right_path_mm);
     if (profile->width_mm == S5_UNKNOWN_WIDTH) {
-        tm_printf((UB*)"%s width=unavailable nearest_distance=%u mm confirmed_edges L=%u R=%u\n",
-                  tag, (unsigned)profile->nearest_mm, (unsigned)profile->left_edge_valid,
-                  (unsigned)profile->right_edge_valid);
+        tm_printf((UB*)"%s width=unavailable reason=%s centre=%u mm nearest_distance=%u mm\n",
+                  tag, width_status[profile->width_status], s5_scan_get(&samples, S5_CENTRE_INDEX),
+                  (unsigned)profile->nearest_mm);
+        if (!verbose) {
+            for (unsigned i = first; i <= last; ++i)
+                tm_printf((UB*)"[S5] width echo angle=%u deg range=%u mm\n",
+                          s5_servo_angle(i * S5_FINE_STEP), s5_scan_get(&samples, i));
+        }
         if (verbose) {
             if (observed_span > 0)
                 tm_printf((UB*)"%s observed_echo_span=%u mm. Width unconfirmed.\n",

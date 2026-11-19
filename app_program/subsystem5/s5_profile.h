@@ -22,6 +22,11 @@ static inline unsigned s5_servo_angle(unsigned scan_offset_deg)
     return S5_MAX_ANGLE - scan_offset_deg;
 }
 
+typedef enum {
+    S5_WIDTH_OK, S5_WIDTH_FACE, S5_WIDTH_LEFT_EDGE, S5_WIDTH_RIGHT_EDGE,
+    S5_WIDTH_BOTH_EDGES, S5_WIDTH_LEFT_ECHO, S5_WIDTH_RIGHT_ECHO, S5_WIDTH_BOTH_ECHOES,
+} S5_WIDTH_STATUS;
+
 typedef struct {
     unsigned nearest_mm : 12;
     unsigned width_mm : 11; /* Flat-face estimate from the centre and edge echoes. */
@@ -31,6 +36,7 @@ typedef struct {
     unsigned angle_offset_deg : 7;
     unsigned left_path_mm : 12;
     unsigned right_path_mm : 12;
+    unsigned width_status : 3;
     signed left_edge_mm : 13; /* Outer sweep bounds used by the motion planner. */
     signed right_edge_mm : 13;
     unsigned left_edge_valid : 1;

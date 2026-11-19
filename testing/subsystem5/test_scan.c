@@ -166,11 +166,40 @@ static void test_box_width_with_wide_beam(void)
     assert(profile.width_mm == 220 && profile.nearest_mm == 209);
     assert(profile.left_edge_mm == -211 && profile.right_edge_mm == 243);
 
+    s5_scan_set(&scan, 3, S5_UNKNOWN_RANGE); /* Missing neighbour on the left. */
+    s5_scan_set(&scan, 4, 229);              /* Another bearing still sees the corner. */
+    s5_scan_set(&scan, 23, 211);             /* Rightmost echo came from the front. */
+    profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX, NULL);
+    assert(profile.width_mm == 220 && profile.width_status == S5_WIDTH_OK);
+
+    s5_scan_set(&scan, S5_CENTRE_INDEX, S5_UNKNOWN_RANGE);
+    profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX - 1, NULL);
+    assert(profile.width_mm >= 220 && profile.width_mm <= 225);
+
     /* The edges also need distance evidence. The same wide bracket with a
        flat stream of echoes cannot identify the width. */
     for (unsigned i = 2; i < 24; ++i) s5_scan_set(&scan, i, 209);
     profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX, NULL);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH);
+    assert(profile.width_status == S5_WIDTH_BOTH_ECHOES);
+}
+
+static void test_narrow_face_at_track_distance(void)
+{
+    const unsigned left[] = {215, 215, 215, 216, 216, 217, 219, 220, 220, S5_OPEN_RANGE};
+    const unsigned right[] = {215, 215, 215, 216, 216, 218, 219, 219, S5_OPEN_RANGE};
+    S5_SCAN scan = {0};
+    for (unsigned i = 0; i < sizeof(left) / sizeof(*left); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX - i, left[i]);
+    for (unsigned i = 0; i < sizeof(right) / sizeof(*right); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX + i, right[i]);
+    S5_PROFILE profile = s5_profile(&scan, 3, 20, S5_CENTRE_INDEX, NULL);
+    /* A 4–5 mm rise from a 215 mm face corresponds to a roughly 87 mm width. */
+    assert(profile.width_mm == 87 && profile.width_status == S5_WIDTH_OK);
+
+    s5_scan_set(&scan, 20, 219);
+    profile = s5_profile(&scan, 3, 20, S5_CENTRE_INDEX, NULL);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_RIGHT_EDGE);
 }
 
 int main(void)
@@ -182,5 +211,6 @@ int main(void)
     test_repeat_and_narrow_target();
     test_box_width_from_ray_brackets();
     test_box_width_with_wide_beam();
-    puts("PASS echo capture, scan packing, and 220 mm width with aimed rays and broad echoes");
+    test_narrow_face_at_track_distance();
+    puts("PASS echo capture, scan packing, broad echoes, dropouts, and narrow-face width");
 }
