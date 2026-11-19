@@ -154,9 +154,14 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
         tm_printf((UB*)"%s width=unavailable nearest_distance=%u mm confirmed_edges L=%u R=%u\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->left_edge_valid,
                   (unsigned)profile->right_edge_valid);
-        if (verbose && observed_span > 0)
-            tm_printf((UB*)"%s observed_echo_span=%u mm. Width unconfirmed.\n",
-                      tag, observed_span);
+        if (verbose) {
+            if (observed_span > 0)
+                tm_printf((UB*)"%s observed_echo_span=%u mm. Width unconfirmed.\n",
+                          tag, observed_span);
+            if (!profile->left_edge_valid || !profile->right_edge_valid)
+                tm_printf((UB*)"%s Use a narrow box 250-280 mm ahead. Aim past each edge at a background over %u mm farther away.\n",
+                          tag, S5_PROFILE_TOLERANCE_MM);
+        }
     } else {
         tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
@@ -181,9 +186,10 @@ static void log_forward(S5_PING ping, const char *context)
     log_ping("[S5]", context, S5_CENTRE_ANGLE, ping);
 }
 
-static void setup(void)
+static BOOL setup(void)
 {
-    if (!s5_hw_init())
+    BOOL ready = s5_hw_init();
+    if (!ready)
         tm_printf((UB*)"[S5] servo or ultrasonic capture failed to start\n");
     else
         tm_printf((UB*)"[S5] GP%u centred: %u us. Waiting for sensor to settle.\n",
@@ -191,6 +197,7 @@ static void setup(void)
     /* The driver holds centre as soon as PWM is enabled. Let the sensor settle
        there before accepting the first range on either firmware profile. */
     tk_dly_tsk(SERVO_HOME_SETTLE_MS);
+    return ready;
 }
 
 static void scan_task(INT stacd, void *exinf)
@@ -289,7 +296,17 @@ EXPORT void subsystem5_bench(void)
     tm_printf((UB*)"[S5 BENCH] GP12 servo, GP16 trigger, GP17 echo. Drive outputs off.\n");
     tm_printf((UB*)"[S5 BENCH] Scan needs two forward echoes within %u mm. One timeout is allowed between them.\n",
               S5_SCAN_STOP_MM);
-    setup();
+    if (!setup()) return;
+
+    /* The servo has no position feedback. Make the commanded movement easy to
+       verify before trusting the bearings in the scan log. */
+    const unsigned check_angles[] = {S5_MIN_ANGLE, S5_MAX_ANGLE, S5_CENTRE_ANGLE};
+    for (unsigned i = 0; i < sizeof(check_angles) / sizeof(check_angles[0]); ++i) {
+        tm_printf((UB*)"[S5 BENCH] Servo check: watch sensor turn to %u deg.\n", check_angles[i]);
+        aim(check_angles[i]);
+        tk_dly_tsk(1000);
+    }
+
     for (;;) {
         unsigned detected = bench_wait_for_echo(TRUE);
         tm_printf((UB*)"[S5 BENCH] obstacle detected at %u mm. Starting scan and turn planning.\n", detected);
