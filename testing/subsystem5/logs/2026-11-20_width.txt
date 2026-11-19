@@ -1,0 +1,12 @@
+Code commit: 4f720de
+PASS echo capture, scan packing, dropouts, width, sweep limits and bench background replay
+PASS obstacle avoidance, both sides, blocked return retry, recovery, and cancellation
+PASS controller events, stationary rescan, preserved failure and profile, and stopped reset
+
+Pico W with Arm GCC 14.2.1 and Pico SDK 2.2.0
+
+make -C build_make -j8 TEST=1
+tools/elf2uf2 mtk3pico_smp1_usb_cdc_wifi_nos4_test.elf mtk3pico_smp1_usb_cdc_wifi_nos4_test.uf2
+
+make -C build_make -j8 S5_BENCH=1
+tools/elf2uf2 mtk3pico_smp1_usb_cdc_s5bench.elf mtk3pico_smp1_usb_cdc_s5bench.uf2

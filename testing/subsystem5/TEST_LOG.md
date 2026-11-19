@@ -187,3 +187,9 @@ The two recorded track sweeps reproduced a left sweep-limit stop. At 150°, the 
 The motor-off bench capture showed a 197 mm centre return, mixed near and far echoes at 135°, and five returns of 800–2013 mm at 140°. Replaying those readings kept 135° unresolved and confirmed background at 140°, within 10° of the last confirmed hit. The original replay estimated 192 mm. With the corner agreement check, the same replay leaves the width unconfirmed because the left corner ranges are inconsistent. The independent 45° departure checks reported unavailable on the left and 208 mm on the right.
 
 A second bench capture used a measured 80 mm object and reported 212 mm. The replay confirms both edge brackets but rejects the width. The final near returns on each side are 9 mm farther than the preceding near returns, so they do not establish stable corner distances. The replay preserves the measured background and conservative motion bounds. The synthetic 87 mm and 220 mm regressions still pass.
+
+## Law-of-cosines width verification
+
+On 2026-11-20, the scan, avoidance and controller host regressions passed on `4f720de`. The scan regression verifies the expected 80 mm result for unequal ranges of 180 mm and 220 mm, separated by 20°. It also checks equal ranges, missing or clipped edges, and a single obstacle hit. The Pico W test and stationary bench builds produced UF2 files. [Test and build output](logs/2026-11-20_width.txt)
+
+The recorded sweep of the physical 80 mm target yielded a 283 mm estimate on replay. The ultrasonic returns spanned 85°, so the reported distance between the two aimed rays overestimated the target's physical width. Accuracy and avoidance on the car still need a hardware run with this firmware.
