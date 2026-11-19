@@ -5,9 +5,9 @@
 The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on the motion core. Timer alarm 0 ends the trigger pulse and enforces the echo deadlines. GPIO IRQ13 timestamps edges and wakes the scan task on a complete or malformed echo. Distance readings have a 30 ms deadline. A pulse that has already started can be observed for up to 60 ms. A complete 46.9–47.3 ms pulse matches the RCWL-9610A no-target response observed on the car. Two consecutive open results confirm that bearing. Missing, malformed and other late echoes are unavailable. The sweep retries after 60 ms at the same bearing. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
 
 1. The forward monitor caps approach targets at 20 RPM within 350 mm. At or below 220 mm the controller stops the drive, waits for the wheels to settle, then sweeps 30°, 60°, 90°, 120°, and 150°.
-2. If an obstacle lies within the 270 mm scan window, the fine scan returns to its bearing. A forward hit takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan confirms each bearing with two consistent pings and expands in 5° steps. Two matching distance readings can span one missing ping within three attempts. Open-range confirmation requires consecutive pings. The scan runs until it brackets each edge or reaches the scan limit.
-3. The profile reports nearest distance and bearing, width estimated from the bracketed edges, and range beyond each edge. The planner requires a measured width and selects the greater side clearance among routes with room for the chassis and the full departure diagonal.
-4. The car turns 45° away, travels diagonally off the line, aligns with the original heading, and passes the obstacle. The planner credits the diagonal's forward travel when calculating the straight bypass distance. If neither side qualifies, it can reverse 30 mm once along the recently travelled approach and scan again. Reverse requires 600 ms of straight line following with measured wheel speeds of at least 10 RPM and fresh sensor data.
+2. The stationary sweep confirms the centre reading first. A forward hit within the 270 mm scan window takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan expands in 5° steps and checks each bearing with up to five pings. A missing or closer return leaves an edge unresolved. Confirmed open space requires consecutive complete echoes.
+3. The profile reports nearest distance and bearing. A width estimate requires an obstacle hit and a farther return or confirmed open space no more than 10° apart on each edge. The planner compares independently measured ranges at the two 45° departure headings. An inconclusive scan gets one stationary retry.
+4. The car turns 45° away, travels diagonally off the line, aligns with the original heading, and passes the obstacle. The planner credits the diagonal's forward travel when calculating the straight bypass distance. If the route is infeasible, the controller can retrace the recent approach once before scanning again. It allows 30 mm after one second of confirmed straight travel at 10 RPM or more, or up to 60 mm for insufficient departure room after two seconds.
 5. The car turns 45° toward the original line behind the obstacle. If the inward corridor is blocked, it can continue along the bypass in short increments. When encoder progress reaches the expected vicinity, two distinct IR hits confirm the line. The car centres its axle, turns 45° back to the original heading, and verifies fresh line and forward range data before resuming line following.
 
 STOP, link or motor faults, stale inputs, and a failed or timed-out search stop the detour. After a fault, reposition the car on the line. Reset clears the stopped controller and a separate START begins the next run. The wheel track, servo direction and sensor-to-axle offset require calibration on the car. Left and right encoders use GP2 and GP3 respectively.
@@ -49,18 +49,20 @@ For a range check, hold a flat target 30–50 cm ahead. A working sensor reports
 | Sweep bearing | 30°–150° in 5° steps | Implicit scan index 0–24; profile and wire store degrees minus 30 in 7 bits |
 | Estimated width | 0–2000 mm, 2047 unavailable | 11 bits in the profile and on wire |
 | Obstacle front projection | 0–511 mm, saturated above 511 | 9 bits in the profile |
-| Left and right clearance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits each; MQTT carries measured values or 4095 |
+| Background range near each edge | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits each in the local profile |
+| Departure heading range | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits each at 45° left and right in the profile and MQTT |
 | Left and right lateral bounds | Signed displacement up to ±3464 mm | Signed 13 bits and one validity bit per bound |
 | Forward interlock status | Open confirmation and blocked flags | 1 bit each in the range gate |
 | Ultrasonic echo fault | Set or clear | 1 bit in the vehicle fault mask |
 | Detour phase and side | 0–14, none/left/right | 4 and 2 bits in RAM and the low six bits of the MQTT avoidance byte |
-| Movement request and reply | 6 planner actions, 5 reply states | 3 bits each in the planner |
+| Stop cause, phase at stop, and forward range | 13 cause codes, phases 0–14, range 0–4095 | 4, 4 and 12 bits in the extended MQTT avoidance packet |
+| Movement request and reply | 7 planner actions, 5 reply states | 3 bits each in the planner |
 | Travel, pass distance and axle offset | 0–511 mm | 9 bits each in planner storage |
 | Lateral bypass offset | 0–255 mm | 8 bits in planner storage |
 | Crossing count, reverse authorization and input flags | 0–2 crossing samples, boolean flags | 2-bit count and one bit per flag |
 | Motion queue maneuver argument | Forward 1–2000, 90° 2048–2049, reverse 2050–4049, 45° 4094–4095 | 12-bit argument within a 16-bit command |
 
-The obstacle and avoidance MQTT packets remain seven bytes and one byte respectively. The dashboard also accepts legacy six-byte obstacle packets. A motion command remains two bytes with a separate queue timestamp. The ISR and scan task share capture state on one core. The task arms and drains it with local interrupts masked. Vehicle snapshots shared with MQTT are mutex-protected.
+The obstacle packet uses seven bytes. Its saved-profile flag distinguishes sweep readings from forward samples. The extended avoidance packet uses four bytes. The dashboard also accepts legacy six-byte obstacle packets and one-byte avoidance packets. A motion command uses two bytes with a separate queue timestamp. The ISR and scan task share capture state on one core. The task arms and drains it with local interrupts masked. Vehicle snapshots shared with MQTT are mutex-protected.
 
 ## Results
 
@@ -165,3 +167,7 @@ With the integrated MQTT firmware and the wheels raised, hold a flat target abou
 ## Diagonal bypass and stopped reset
 
 Host regressions covered both bypass sides, the measured-width requirement, a blocked return corridor, line recovery and the original heading. The S2 host check verified that each new turn uses the correct direction and 45° encoder targets. Controller and dashboard tests covered reset for a failed detour with no motor fault bits, clearing a stopped motor fault, and reporting a reset timeout. Track clearance, measured turn angles, and time to complete the photo's workflow still need measurements on the car.
+
+## Scan retention and recovery
+
+Controller regression replayed a failed width estimate at 208 mm followed by a 606 mm forward reading and a STOP request. The sweep and failure cause remained available through STOP. Reset cleared the detour without starting motion. The browser replay with Mosquitto showed the two distances separately and verified that Reset remained available with an older motor-mode report. Host tests also checked one stationary retry, 45° side selection, and departure after a bounded retrace. The physical width estimate and detour still need a track test.

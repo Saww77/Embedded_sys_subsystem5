@@ -30,6 +30,7 @@ typedef struct {
     unsigned near_mm:12, width_mm:11, clear_left_mm:12, clear_right_mm:12;
     unsigned obstacle_angle_offset:7, obstacle_no_echo:1;
     unsigned avoidance_phase:4, avoidance_side:2, obstacle_profile:1;
+    unsigned avoidance_failure:4, avoidance_failed_phase:4, obstacle_forward_mm:12;
     unsigned motor_ready:1, link_ready:1, start_pending:1, stop_pending:1, reset_pending:1;
     unsigned line_valid:1, line_stop:1, terrain_valid:1, obstacle_valid:1, obstacle_blocked:1;
     unsigned telemetry_drops,timing_fault_gap_us,control_gap_limit_us;

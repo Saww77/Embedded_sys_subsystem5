@@ -16,6 +16,21 @@ AVOIDANCE_PHASES = (
 )
 AVOIDANCE_SIDES = (None, 'Left', 'Right')
 AVOIDANCE_FAILED = 12
+AVOIDANCE_FAILURES = (
+    None,
+    'Servo sweep timed out',
+    'The sweep could not confirm the obstacle',
+    'The sweep could not confirm both edges for a width estimate',
+    'Too little room to turn onto the departure diagonal',
+    'Neither 45° departure path had enough clearance',
+    'The ultrasonic sensor lost a usable echo',
+    'An obstacle was too close for the next move',
+    'The motor controller could not finish the move',
+    'The line could not be confirmed',
+    'Stopped by operator request',
+    'A vehicle safety interlock stopped the detour',
+    'The detour phase timed out',
+)
 
 def command_payload(command):
     if command == 'start': return b'\x01'
@@ -25,7 +40,7 @@ def command_payload(command):
 
 def decode_telemetry(kind, payload):
     sizes = dict(vehicle=(1,), motion=(9,), line=(1,), terrain=(2,),
-                 obstacle=(6, 7), controller=(25, 31), avoidance=(1,))
+                 obstacle=(6, 7), controller=(25, 31), avoidance=(1, 4))
     if len(payload) not in sizes.get(kind, ()):
         raise ValueError('Incorrect binary telemetry length')
     word = int.from_bytes(payload, 'little')
@@ -66,9 +81,21 @@ def decode_telemetry(kind, payload):
                     timing_limit_us=int.from_bytes(payload[29:31],'little') if payload[0]>=2 else None)
     if kind == 'avoidance':
         phase, side = bits(0, 4), bits(4, 2)
-        if word >> 6 or phase >= len(AVOIDANCE_PHASES) or side >= len(AVOIDANCE_SIDES):
+        if bits(6, 2) or phase >= len(AVOIDANCE_PHASES) or side >= len(AVOIDANCE_SIDES):
             raise ValueError('Invalid avoidance payload')
-        return dict(phase=phase, phase_label=AVOIDANCE_PHASES[phase], side=AVOIDANCE_SIDES[side])
+        result = dict(phase=phase, phase_label=AVOIDANCE_PHASES[phase], side=AVOIDANCE_SIDES[side])
+        if len(payload) == 4:
+            failure, failed_phase = bits(8, 4), bits(12, 4)
+            forward = bits(16, 12)
+            if (word >> 28 or failure >= len(AVOIDANCE_FAILURES) or
+                    failed_phase >= len(AVOIDANCE_PHASES) or 4000 < forward < 4094 or
+                    (failure and phase != AVOIDANCE_FAILED)):
+                raise ValueError('Invalid detour diagnostics')
+            result.update(failure=AVOIDANCE_FAILURES[failure],
+                          failed_phase=AVOIDANCE_PHASES[failed_phase] if failure else None,
+                          forward_mm=forward if forward <= 4000 else None,
+                          forward_open=forward == 4094)
+        return result
     if kind == 'vehicle':
         state, faults = bits(0, 3), bits(3, 5)
         if state >= len(STATES): raise ValueError('Unknown vehicle state')
@@ -98,9 +125,15 @@ def decode_telemetry(kind, payload):
                   left_mm=bits(23, 12), right_mm=bits(35, 12))
     if len(payload) == 7:
         angle = bits(47, 7) + 30
-        if word >> 54 or angle > 150:
+        if word >> 55 or angle > 150:
             raise ValueError('Invalid obstacle angle or reserved bits')
         fields['angle_deg'] = angle
+        if bits(54, 1):
+            fields['saved_profile'] = True
+            for side in ('left', 'right'):
+                if fields[side + '_mm'] == 4094:
+                    fields[side + '_mm'] = None
+                    fields[side + '_open'] = True
         for key, unknown in (('width_mm', 2047), ('left_mm', 4095), ('right_mm', 4095)):
             if fields[key] == unknown:
                 fields[key] = None

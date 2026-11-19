@@ -90,14 +90,18 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 14, S5_OPEN_RANGE);
     S5_PROFILE profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.nearest_mm == 140 && s5_servo_angle(profile.angle_offset_deg) == 95);
-    assert(profile.width_mm == 38 && profile.right_mm == S5_OPEN_RANGE);
+    assert(profile.width_mm == 39 && profile.right_mm == S5_OPEN_RANGE);
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
     s5_scan_set(&scan, 15, 550);
     profile = s5_profile(&scan, 10, 15, 12, 0);
-    assert(profile.width_mm == 31 && profile.right_mm == 550);
-    assert(profile.right_edge_valid && profile.right_edge_mm == 38);
+    assert(profile.width_mm == 45 && profile.right_mm == 550);
+    assert(profile.right_edge_valid && profile.right_edge_mm == 40);
+    s5_scan_set(&scan, 15, 30); /* A much closer return cannot bracket the far edge. */
+    s5_scan_set(&scan, 16, 550); /* This is too far from the last hit to estimate width. */
+    profile = s5_profile(&scan, 10, 16, 12, 0);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
 }
 
 static void test_observed_span_without_clearance(void)
@@ -129,8 +133,8 @@ static void test_repeat_and_narrow_target(void)
     s5_scan_set(&scan, 13, S5_OPEN_RANGE);
     unsigned span;
     S5_PROFILE profile = s5_profile(&scan, 11, 13, 12, &span);
-    assert(span == 0 && profile.width_mm == 26 && profile.front_mm == 300);
-    assert(profile.left_edge_mm == -26 && profile.right_edge_mm == 26);
+    assert(span == 0 && profile.width_mm == 27 && profile.front_mm == 300);
+    assert(profile.left_edge_mm == -27 && profile.right_edge_mm == 27);
 }
 
 int main(void)

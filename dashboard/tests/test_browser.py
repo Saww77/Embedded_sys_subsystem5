@@ -207,6 +207,24 @@ def main():
             expect(page.locator("#start")).to_be_enabled()
             assert commands[-1]==(b"\x02",0,False) and len(commands)==5
             print("PASS fault recovery: stopped-only RESET sends02, clears fixture fault, leaves mission IDLE and never sends START")
+            scan = (208 | (2047 << 12) | (4094 << 23) | (4095 << 35) |
+                    (60 << 47) | (1 << 54)).to_bytes(7, "little")
+            fixture.publish(root + "/obstacle", scan).wait_for_publish(timeout=5)
+            fixture.publish(root + "/avoidance", b"\x0c\x13" + (606).to_bytes(2, "little")).wait_for_publish(timeout=5)
+            stopped_diag = bytearray(31)
+            stopped_diag[:5] = bytes((2, 0, 1, 8, 1 | 2 | 64))
+            fixture.publish(root + "/motion", motion_packet()).wait_for_publish(timeout=5)
+            fixture.publish(root + "/controller", stopped_diag).wait_for_publish(timeout=5)
+            expect(page.locator("#start-blocker")).to_have_text("Detour stopped")
+            expect(page.locator("#obstacle-nearest")).to_have_text("208 mm")
+            expect(page.locator("#obstacle-width")).to_have_text("Unconfirmed")
+            expect(page.locator("#obstacle-forward")).to_have_text("606 mm")
+            expect(page.locator("#avoidance-failure")).to_contain_text("could not confirm both edges")
+            expect(page.locator("#reset")).to_be_enabled()
+            page.locator("#reset").click()
+            expect(page.locator("#start")).to_be_enabled()
+            assert commands[-1] == (b"\x02", 0, False) and len(commands) == 6
+            print("PASS stopped detour: the saved sweep survives forward readings and Reset works with older motor mode")
             fixture.publish(root+"/vehicle",b"\x01").wait_for_publish(timeout=5)
             fixture.publish(root+"/motion",motion_packet()).wait_for_publish(timeout=5)
             # Fresh signal for a representative desktop screenshot.
@@ -236,7 +254,7 @@ def main():
             broker.wait(timeout=5)
             expect(page.locator("#pico-state")).to_have_text("Broker unavailable")
             assert page.locator("#start").is_disabled() and page.locator("#stop").is_disabled()
-            assert len(commands) == 5  # No automatic command/replay.
+            assert len(commands) == 6  # No automatic command/replay.
             assert not errors, errors
             print("PASS browser: broker loss disables controls; no auto-command; no JavaScript errors")
             browser.close()

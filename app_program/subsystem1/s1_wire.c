@@ -48,8 +48,8 @@ int s1_wire_obstacle(unsigned char out[7], unsigned nearest_mm, unsigned width_m
                      unsigned left_mm, unsigned right_mm, unsigned angle_deg)
 {
     if (!out || nearest_mm > 4000u || (width_mm > 2000u && width_mm != 2047u) ||
-        (left_mm > 4000u && left_mm != 4095u) ||
-        (right_mm > 4000u && right_mm != 4095u) ||
+        (left_mm > 4000u && left_mm < 4094u) || left_mm > 4095u ||
+        (right_mm > 4000u && right_mm < 4094u) || right_mm > 4095u ||
         angle_deg < 30u || angle_deg > 150u) return 0;
     for (unsigned i = 0; i < 7u; ++i) out[i] = 0;
     s1_wire_put(out, 0u, 12u, nearest_mm);

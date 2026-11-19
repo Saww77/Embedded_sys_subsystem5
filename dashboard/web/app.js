@@ -29,6 +29,9 @@ function draw(data) {
   el("start").disabled = !data.start_allowed || commandBusy || resetBusy;
   el("stop").disabled = !data.stop_allowed;
   el("reset").disabled = !data.reset_allowed || resetBusy;
+  el("reset-hint").textContent = resetBusy ? "Waiting for the Pico to finish Reset."
+    : data.reset_block === undefined ? "Restart the Python dashboard from the updated repository."
+    : data.reset_block ?? "Reset clears the stopped controller for a new run. Press Start when ready.";
   el("ready-dot").classList.toggle("online", data.start_allowed);
   let title = "Waiting for the Pico";
   let description = "Waiting for a live heartbeat. Stored broker messages do not confirm the Pico is online.";
@@ -94,6 +97,7 @@ async function refresh() {
     state = null;
     drawTelemetry(null);
     el("start").disabled = el("stop").disabled = el("reset").disabled = true;
+    el("reset-hint").textContent = "Waiting for the dashboard server.";
     el("live-monitor").classList.remove("online");
     el("ready-dot").classList.remove("online");
     for (const id of ["wifi", "mqtt", "subscribed"]) setFlag(id, false, false);
@@ -170,7 +174,9 @@ function drawTelemetry(data) {
     card.classList.toggle("empty", !sample?.data);
     const badge = el(name + "-freshness");
     badge.className = "sample-status" + (fresh ? " fresh" : sample?.data ? " stale" : "");
-    badge.textContent = !sample?.data ? "No data" : fresh ? "Live" : `Stale · ${Math.floor(sample.age)}s`;
+    badge.textContent = !sample?.data ? "No data"
+      : fresh ? sample.data.saved_profile ? "Saved sweep" : "Live"
+      : `Stale · ${Math.floor(sample.age)}s`;
   }
   const diagnostic = topics.controller;
   const controller = diagnostic?.data;
@@ -215,13 +221,21 @@ function drawTelemetry(data) {
   text("terrain-height", terrain?.height_mm);
   text("terrain-phase", terrain?.phase);
   for (const [id, key] of [["nearest", "nearest_mm"], ["width", "width_mm"], ["left", "left_mm"], ["right", "right_mm"]]) {
-    text("obstacle-" + id, obstacle?.[key] == null ? null : obstacle[key] + " mm");
+    const display = obstacle?.[id + "_open"] ? "Open" : obstacle?.[key] == null ? null : obstacle[key] + " mm";
+    text("obstacle-" + id, display ?? (obstacle?.saved_profile && id !== "nearest" ? "Unconfirmed" : null));
   }
   text("obstacle-angle", obstacle?.angle_deg == null ? null : obstacle.angle_deg + "°");
   const avoidance = topics.avoidance;
+  const detour = avoidance?.data;
   const phase = avoidance?.data?.phase_label;
   text("avoidance-phase", phase && !avoidance.fresh ? phase + " (stale)" : phase);
-  text("avoidance-side", avoidance?.data?.side);
+  text("avoidance-side", detour?.side);
+  text("obstacle-forward", !avoidance?.fresh || detour?.forward_mm === undefined ? null :
+    detour.forward_open ? "Open" : detour.forward_mm == null ? "No usable echo" : detour.forward_mm + " mm");
+  text("obstacle-source", obstacle?.saved_profile ? "Side clearances were measured along the 45° departure paths." :
+    "The car stops to scan at 220 mm during a run.");
+  el("avoidance-failure").hidden = !detour?.failure;
+  text("avoidance-failure", detour?.failure ? `${detour.failure} · ${detour.failed_phase}` : "");
   const history = data?.motion_history ?? [];
   const maximum = Math.max(30, ...history.flatMap(p => [p.left_rpm, p.right_rpm]));
   for (const side of ["left", "right"]) {

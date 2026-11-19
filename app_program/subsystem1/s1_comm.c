@@ -36,10 +36,11 @@ ER s1_publish_terrain(unsigned height_mm, unsigned phase)
 }
 
 ER s1_publish_obstacle(unsigned nearest_mm, unsigned width_mm,
-                       unsigned left_mm, unsigned right_mm, unsigned angle_deg)
+                       unsigned left_mm, unsigned right_mm, unsigned angle_deg, BOOL profile)
 {
     unsigned char data[7];
     if (!s1_wire_obstacle(data, nearest_mm, width_mm, left_mm, right_mm, angle_deg)) { return E_PAR; }
+    s1_wire_put(data, 54u, 1u, profile != FALSE);
     return publish(MQTT_ROUTE_OBSTACLE, data, sizeof(data));
 }
 

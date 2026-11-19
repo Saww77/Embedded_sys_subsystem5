@@ -1,26 +1,35 @@
 #include "s5_profile.h"
 
 #define MAX_WIDTH_MM 2000
+#define MAX_EDGE_BRACKET_STEPS 2u
 
 _Static_assert(S5_CLEAR_MM <= S5_MAX_PROJECTED_FRONT_MM, "Front projection must cover the obstacle window");
 
+/* sin and cos for 0..60 degrees in steps of 5 degrees, scaled by 1024. */
+static const unsigned short sine[] = {0, 89, 178, 265, 350, 433, 512, 587, 658, 724, 784, 839, 887};
+static const unsigned short cosine[] = {1024, 1020, 1008, 989, 962, 928, 886, 838, 784, 724, 658, 587, 512};
+
+static unsigned angle_steps(unsigned index)
+{
+    return index < S5_CENTRE_INDEX ? S5_CENTRE_INDEX - index : index - S5_CENTRE_INDEX;
+}
+
 static int lateral_mm(unsigned index, unsigned range_mm)
 {
-    /* sin(0..60 degrees) in steps of 5 degrees, scaled by 1024. */
-    static const short sine[] = {0, 89, 178, 265, 350, 433, 512,
-                                587, 658, 724, 784, 839, 887};
-    int offset = (int)index - (S5_SCAN_POINTS - 1) / 2;
-    int projection = (int)range_mm * sine[offset < 0 ? -offset : offset] / 1024;
-    return offset < 0 ? -projection : projection;
+    int projection = range_mm * sine[angle_steps(index)] / 1024u;
+    return index < S5_CENTRE_INDEX ? -projection : projection;
 }
 
 static unsigned project_forward_mm(unsigned index, unsigned range_mm)
 {
-    /* cos(0..60 degrees) in steps of 5 degrees, scaled by 1024 and rounded down. */
-    static const unsigned short cosine[] = {1024, 1020, 1008, 989, 962, 928, 886,
-                                           838, 784, 724, 658, 587, 512};
-    unsigned offset = index < S5_CENTRE_INDEX ? S5_CENTRE_INDEX - index : index - S5_CENTRE_INDEX;
-    return range_mm * cosine[offset] / 1024u;
+    return range_mm * cosine[angle_steps(index)] / 1024u;
+}
+
+static int edge_bound_mm(unsigned bearing, unsigned obstacle_depth)
+{
+    unsigned angle = angle_steps(bearing);
+    int projection = (obstacle_depth * sine[angle] + cosine[angle] - 1u) / cosine[angle];
+    return bearing < S5_CENTRE_INDEX ? -projection : projection;
 }
 
 void s5_scan_set(S5_SCAN *scan, unsigned index, unsigned range)
@@ -65,6 +74,12 @@ bool s5_same_obstacle(unsigned range, unsigned reference)
            reference <= range + S5_PROFILE_TOLERANCE_MM;
 }
 
+bool s5_background_beyond(unsigned range, unsigned reference)
+{
+    return range == S5_OPEN_RANGE ||
+           (s5_range_measured(range) && range > reference + S5_PROFILE_TOLERANCE_MM);
+}
+
 typedef struct {
     unsigned last_hit, boundary, clearance;
 } S5_EDGE;
@@ -77,12 +92,12 @@ static S5_EDGE profile_edge(const S5_SCAN *scan, unsigned anchor, unsigned limit
         i += step;
         unsigned range = s5_scan_get(scan, (unsigned)i);
         if (!s5_range_available(range)) continue;
-        if (!s5_same_obstacle(range, reference)) {
+        if (s5_background_beyond(range, reference)) {
             edge.boundary = (unsigned)i;
             edge.clearance = range;
             break;
         }
-        edge.last_hit = (unsigned)i;
+        if (s5_same_obstacle(range, reference)) edge.last_hit = (unsigned)i;
     }
     return edge;
 }
@@ -107,15 +122,19 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
         .front_mm = front < S5_MAX_PROJECTED_FRONT_MM ? front : S5_MAX_PROJECTED_FRONT_MM,
         .width_mm = S5_UNKNOWN_WIDTH,
         .left_mm = left.clearance,
-        .right_mm = right.clearance
+        .right_mm = right.clearance,
+        .left_path_mm = S5_UNKNOWN_RANGE,
+        .right_path_mm = S5_UNKNOWN_RANGE,
     };
-    /* The first usable bearing beyond each edge supplies a conservative lateral bound. */
-    if (s5_range_available(left.clearance)) {
-        result.left_edge_mm = lateral_mm(left.boundary, s5_scan_get(scan, left.last_hit));
+    /* Project the background bearing onto the depth of the adjacent obstacle face. */
+    if (s5_range_available(left.clearance) && left.last_hit - left.boundary <= MAX_EDGE_BRACKET_STEPS) {
+        unsigned depth = project_forward_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
+        result.left_edge_mm = edge_bound_mm(left.boundary, depth);
         result.left_edge_valid = true;
     }
-    if (s5_range_available(right.clearance)) {
-        result.right_edge_mm = lateral_mm(right.boundary, s5_scan_get(scan, right.last_hit));
+    if (s5_range_available(right.clearance) && right.boundary - right.last_hit <= MAX_EDGE_BRACKET_STEPS) {
+        unsigned depth = project_forward_mm(right.last_hit, s5_scan_get(scan, right.last_hit));
+        result.right_edge_mm = edge_bound_mm(right.boundary, depth);
         result.right_edge_valid = true;
     }
     int left_hit = lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
@@ -123,10 +142,8 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     int span = right_hit - left_hit;
     if (observed_span_mm) *observed_span_mm = span > 0 ? (unsigned)span : 0u;
     if (result.left_edge_valid && result.right_edge_valid) {
-        /* Adjacent hit/miss bearings bracket an edge. Use their midpoint for
-         * width, and keep the outer bearing above for bypass clearance. */
-        int left_twice = left_hit + (left.boundary + 1u == left.last_hit ? result.left_edge_mm : left_hit);
-        int right_twice = right_hit + (right.boundary == right.last_hit + 1u ? result.right_edge_mm : right_hit);
+        int left_twice = left_hit + result.left_edge_mm;
+        int right_twice = right_hit + result.right_edge_mm;
         int width = (right_twice - left_twice + 1) / 2;
         if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (unsigned)width;
     }

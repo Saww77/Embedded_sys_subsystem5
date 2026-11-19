@@ -47,7 +47,7 @@ static void publish_obstacle(const VEHICLE_SNAPSHOT *s)
     static ER previous_result;
     static uint32_t last_log_at;
     ER result = s1_publish_obstacle(s->near_mm, s->width_mm, s->clear_left_mm,
-                                   s->clear_right_mm, s5_servo_angle(s->obstacle_angle_offset));
+                                   s->clear_right_mm, s5_servo_angle(s->obstacle_angle_offset), s->obstacle_profile);
     account(result);
     BOOL width = s->width_mm != S5_UNKNOWN_WIDTH;
     if (logged && width == previous_width && result == previous_result &&
@@ -82,8 +82,13 @@ void s1_publish_telemetry(void)
     if(s.reason==VC_REASON_LINK)faults|=S1_FAULT_WIFI;
     account(s1_publish_vehicle(s.state,faults));
     publish_controller(&s);
-    unsigned char avoidance = (unsigned char)(s.avoidance_phase | (s.avoidance_side << 4));
-    account((ER)mqtt_bridge_send(MQTT_ROUTE_AVOIDANCE, &avoidance, sizeof(avoidance)));
+    unsigned char avoidance[4] = {
+        (unsigned char)(s.avoidance_phase | (s.avoidance_side << 4)),
+        (unsigned char)(s.avoidance_failure | (s.avoidance_failed_phase << 4)),
+        (unsigned char)s.obstacle_forward_mm,
+        (unsigned char)(s.obstacle_forward_mm >> 8),
+    };
+    account((ER)mqtt_bridge_send(MQTT_ROUTE_AVOIDANCE, avoidance, sizeof(avoidance)));
     /* No fabricated zero measurements during startup or absent subsystems. */
     if(motion_ready())account(s1_publish_motion());
     if(s.line_valid && (uint32_t)(s.timestamp_ms-s.line_timestamp_ms)<=VC_LINE_MAX_AGE_MS){
@@ -92,8 +97,8 @@ void s1_publish_telemetry(void)
     }
     if(s.terrain_valid && (uint32_t)(s.timestamp_ms-s.terrain_timestamp_ms)<=VC_SENSOR_MAX_AGE_MS)
         account(s1_publish_terrain(s.height_mm,s.terrain_phase));
-    unsigned obstacle_max_age = s.obstacle_profile ? 4000u : S5_RANGE_MAX_AGE_MS;
-    if(s.obstacle_valid && (uint32_t)(s.timestamp_ms-s.obstacle_timestamp_ms)<=obstacle_max_age)
+    if (s.obstacle_valid && (s.obstacle_profile ||
+        (uint32_t)(s.timestamp_ms - s.obstacle_timestamp_ms) <= S5_RANGE_MAX_AGE_MS))
         publish_obstacle(&s);
 #endif
 }

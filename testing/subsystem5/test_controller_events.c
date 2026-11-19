@@ -188,5 +188,44 @@ int main(void)
     clock_ms += VC_RESET_TIMEOUT_MS;
     vehicle_notify_feedback();
     assert(work() == TMO_FEVR && reset_count == 3 && !reset_result);
-    puts("PASS controller events, START interlock, STOP priority, scan cancellation and stopped reset");
+    motor_stopped();
+    work();
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    vehicle_submit_obstacle_range(606);
+    assert(vehicle_request_start());
+    work();
+    motor_acknowledge(S2_REPLY_OK);
+    work();
+    vehicle_submit_obstacle_range(208);
+    work();
+    motor_stopped();
+    work();
+    assert(vehicle_obstacle_scan_request(&request));
+
+    S5_PROFILE unresolved = {.nearest_mm = 208, .front_mm = 203, .width_mm = S5_UNKNOWN_WIDTH,
+                             .angle_offset_deg = 60, .left_path_mm = S5_OPEN_RANGE,
+                             .right_path_mm = S5_UNKNOWN_RANGE};
+    uint32_t first_request = request;
+    clock_ms += 20;
+    vehicle_finish_obstacle_scan(&unresolved, request);
+    assert(work() > 0 && vehicle_obstacle_scan_request(&request) && request != first_request);
+    clock_ms += 20;
+    vehicle_finish_obstacle_scan(&unresolved, request);
+    assert(work() == TMO_FEVR && vehicle_state() == VC_FAULT);
+    vehicle_submit_obstacle_range(606);
+    vehicle_request_stop();
+    work();
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_IDLE && snapshot.obstacle_profile);
+    assert(snapshot.near_mm == 208 && snapshot.obstacle_forward_mm == 606 &&
+           snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_WIDTH &&
+           snapshot.avoidance_failed_phase == S5_PROFILE_PATH);
+    motor_stopped();
+    work();
+    assert(vehicle_request_reset());
+    work();
+    motor_stopped();
+    work();
+    assert(vehicle_get_snapshot(&snapshot) && !snapshot.obstacle_profile &&
+           snapshot.avoidance_failure == S5_FAIL_NONE && reset_count == 4 && reset_result);
+    puts("PASS controller events, stationary rescan, preserved failure and profile, and stopped reset");
 }

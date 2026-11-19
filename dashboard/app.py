@@ -174,9 +174,12 @@ class Dashboard:
                 if kind == "vehicle" and (previous is None or previous['data'] != decoded):
                     self.event("vehicle", "Mission: " + decoded['state'] +
                                (" · " + ", ".join(decoded['fault_labels']) if decoded['faults'] else ""))
-                if kind == "avoidance" and decoded['phase'] and (previous is None or previous['data'] != decoded):
-                    side = " · " + decoded['side'] if decoded['side'] else ""
-                    self.event("vehicle", decoded['phase_label'] + side)
+                if kind == "avoidance" and decoded["phase"] and (
+                    previous is None or any(previous["data"].get(key) != decoded.get(key)
+                                            for key in ("phase", "side", "failure"))
+                ):
+                    detail = decoded.get("failure") or decoded["side"]
+                    self.event("vehicle", decoded["phase_label"] + (" · " + detail if detail else ""))
                 if kind == "motion":
                     self.motion_history.append(dict(left_rpm=decoded['left_rpm'],
                                                     right_rpm=decoded['right_rpm']))
@@ -218,22 +221,33 @@ class Dashboard:
             avoidance = telemetry["avoidance"]
             if (obstacle_interlock and not echo_fault and avoidance["fresh"] and
                     avoidance["data"]["phase"] == AVOIDANCE_FAILED):
+                failure = avoidance["data"].get("failure")
                 current["data"] = dict(
                     current["data"],
                     start_block_label="Detour stopped",
-                    start_hint="Place the car back on the line, press Reset, and confirm the path is clear before pressing START.",
+                    start_hint=(failure + ". " if failure else "") +
+                               "Place the car back on the line, press Reset, and confirm the path is clear before pressing START.",
                 )
+            reset_block = "Waiting for live controller diagnostics."
+            if current["fresh"]:
+                diagnostics = current["data"]
+                if not diagnostics["reset_supported"]:
+                    reset_block = "The Pico needs firmware with dashboard Reset support."
+                elif not diagnostics["link_ready"] or not diagnostics["motor_ready"]:
+                    reset_block = "Waiting for the Pico command link and motor controller."
+                elif diagnostics["reset_pending"] or diagnostics["stop_pending"] or diagnostics["start_pending"]:
+                    reset_block = "Waiting for the Pico to process the current command."
+                elif diagnostics["state"] not in ("IDLE", "FAULT"):
+                    reset_block = "Press Stop and wait for the controller to report Idle or Fault."
+                else:
+                    reset_block = None
             return {
                 "broker": self.broker, "broker_port": self.broker_port, "root": self.root,
                 "broker_connected": self.broker_connected, "monitor_ready": self.monitor_ready,
                 "error": self.error, "start_allowed": bool(ready),
                 "stop_allowed": self.broker_connected,
-                "reset_allowed": bool(current["fresh"] and fresh and flags & 7 == 7 and
-                                      current["data"]["reset_supported"] and
-                                      not current["data"]["reset_pending"] and
-                                      not current["data"]["start_pending"] and
-                                      current["data"]["state"] in ("IDLE", "FAULT") and
-                                      telemetry["motion"]["fresh"] and telemetry["motion"]["data"]["mode"] == 0),
+                "reset_allowed": reset_block is None,
+                "reset_block": reset_block,
                 "pico": {"fresh": fresh, "age": age, "time": self.heartbeat_time,
                          "hex": None if self.last_status is None else f"{flags:02X}",
                          "wifi": bool(flags & 1), "mqtt": bool(flags & 2),
@@ -258,7 +272,7 @@ class Dashboard:
                     raise CommandUnavailable(f"{diagnostics['start_block_label']}. {diagnostics['start_hint']}")
                 raise CommandUnavailable("Wait for a live Pico heartbeat with all connection flags ready.")
             if command == "reset" and not state["reset_allowed"]:
-                raise CommandUnavailable("Reset requires a live Pico and stopped motors. Press Stop and wait for the controller to report Idle or Fault.")
+                raise CommandUnavailable(state["reset_block"])
             result = self.client.publish(self.root + "/command", payload, qos=0, retain=False)
             if result.rc != 0:
                 raise CommandUnavailable("MQTT did not queue the command; check the broker connection.")

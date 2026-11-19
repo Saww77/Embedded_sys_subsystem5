@@ -55,8 +55,8 @@ Subscriptions use the configured root and these suffixes:
 | `motion` |9| S2_STATUS packed bits: mode0:2, level2:3, faults5:4, L RPM9:9, R RPM18:9, L PWM27:7, R PWM34:7, L progress41:13, R progress54:13 |
 | `line` |1| L/C/R black bits0/1/2, barcode bits3..5 |
 | `terrain` |2| height0:11, phase11:3 |
-| `avoidance` |1| phase at bits 0:4, side at 4:2 (0 none, 1 left, 2 right), upper two bits zero |
-| `obstacle` |6 / 7| nearest0:12, width12:11, left23:12, right35:12. Seven-byte packets add angle minus 30° at 47:7. Width 2047 and clearance 4095 mean unavailable in seven-byte packets. |
+| `avoidance` |1 / 4| phase at bits 0:4, side at 4:2 (0 none, 1 left, 2 right). Four-byte packets add stop cause at 8:4, phase at the stop at 12:4 and current forward range at 16:12. |
+| `obstacle` |6 / 7| nearest0:12, width12:11, left23:12, right35:12. Seven-byte packets add angle minus 30° at 47:7 and a saved-sweep flag at bit 54. Width 2047 and clearance 4095 mean unavailable. A saved sweep can report a confirmed open side as 4094. |
 
 Bit numbering starts at the least significant bit of byte0. Fields use the firmware's little-endian packing. `offset:width` notation is used above. `mqtt_protocol.py` validates lengths, ranges and unused bits before displaying telemetry. START publishes `0x01`, STOP `0x00`, and stopped-only RESET `0x02` to `/command`, QoS0, non-retained. Strings such as `START` are not valid Pico commands.
 
@@ -87,10 +87,10 @@ Connect the scan servo to the Robo Pico servo header marked **GP12**. At power-u
 
 ## Trace obstacle width from the Pico to the dashboard
 
-Open the firmware's USB serial console at 115200 baud. A forward reading at 90° confirms the range sensor produced a sample. While following the line, the controller slows at 350 mm and stops to scan at 220 mm. A profile needs returns near both sides of a target with a clear reading beyond each edge.
+Open the firmware's USB serial console at 115200 baud. The controller slows at 350 mm and stops to scan at 220 mm. The servo confirms the forward target, brackets both edges for the width estimate, samples the two 45° departure headings, then returns to centre. The dashboard keeps the latest sweep until Reset or the next detour. **Forward now** shows the current straight-ahead reading separately.
 
-- `[S5] scan waiting for drive motors to stop` identifies a motion gate. `GP12 sweep start` means the firmware is commanding the servo. Watch the horn to confirm it moves.
-- `[S5] width unavailable` means no numerical width was calculated. The edge flags show which edges the sweep resolved. The bench build prints the commanded angle and echo for each scan point.
+- `confirming forward target before GP12 coarse sweep` means the scan task started the sweep.
+- `width=unavailable` means the scan could not bracket both edges closely enough. An inconclusive result gets one stationary retry. The dashboard reports the reason and phase if the detour stops.
 - `[S5] profile ... width=...` confirms width was calculated on the Pico. `[S1 MQTT] /obstacle queued ... width=...` confirms the frame reached the local MQTT queue. Use the dashboard's topic root and subscribe to the broker to verify delivery. The payload is binary.
 
 ```sh
@@ -99,7 +99,7 @@ mosquitto_sub -h BROKER_IP -t 'TOPIC_ROOT/obstacle' -F '%t %x'
 
 ## Reset without power cycling
 
-With matching firmware, **Reset** is available in IDLE or FAULT when the wheels are stopped. For a failed detour, place the car back on the line first. Press Reset once and wait for **Reset complete** and IDLE. Press START separately when the path is clear. The Pico keeps its Wi-Fi and broker sessions during this reset. If a timing fault returns, capture the displayed **Gap / limit** numbers before clearing it.
+With matching firmware, **Reset** is available when fresh controller data reports IDLE or FAULT and the command link is ready. The Pico waits for the wheels to stop before clearing the state. For a failed detour, place the car back on the line first. Press Reset once and wait for **Reset complete**, then press START when the path is clear. The Pico keeps its Wi-Fi and broker sessions during this reset. Restart the Python dashboard process after updating the repository so it serves the current Reset rules.
 
 RESET sends `02`. The Pico replies with `04` for acceptance or `06` for rejection. An accepted reset reports `0C` on completion or `0E` on failure. Controller diagnostics v2 carry the pending flag, latched timing gap and limit in 31 bytes. Version 1 diagnostics can still be displayed.
 

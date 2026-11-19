@@ -151,21 +151,35 @@ class TelemetryTests(unittest.TestCase):
     def test_stopped_detour_without_motor_fault_can_reset(self):
         packet = bytearray(31)
         packet[0:5] = bytes((2, 5, 6, 8, 1 | 2 | 64))
-        self.send('status', b'\x07')
         self.send('controller', packet)
-        self.send('avoidance', b'\x1c')
+        self.send('avoidance', b'\x0c\x13' + (606).to_bytes(2, 'little'))
+        self.assertTrue(self.d.snapshot()['reset_allowed'])
         self.send('motion', motion_packet())
-        self.assertFalse(self.d.snapshot()['reset_allowed'])
-        stopped = bytearray(motion_packet())
-        stopped[0] &= ~3
-        self.send('motion', stopped)
+        # Only the Pico decides whether the wheels have stopped during Reset.
         self.assertTrue(self.d.snapshot()['reset_allowed'])
         self.assertFalse(self.d.snapshot()['start_allowed'])
+        packet[4] |= 32
+        self.send('controller', packet)
+        self.assertFalse(self.d.snapshot()['reset_allowed'])
+        self.assertIn('current command', self.d.snapshot()['reset_block'])
         self.send('ack', b'\x0c')
         self.assertTrue(self.d.snapshot()['last_ack']['complete'])
         self.assertFalse(self.d.snapshot()['last_ack']['rejected'])
         self.send('ack', b'\x0e')
         self.assertTrue(self.d.snapshot()['last_ack']['rejected'])
+
+    def test_saved_sweep_is_distinct_from_current_range_and_failure(self):
+        scan = (208 | (100 << 12) | (4094 << 23) | (390 << 35) | (60 << 47) | (1 << 54))
+        self.send('obstacle', scan.to_bytes(7, 'little'))
+        self.send('avoidance', b'\x0c\x15' + (606).to_bytes(2, 'little'))
+        self.send('avoidance', b'\x0c\x15' + (611).to_bytes(2, 'little'))
+        state = self.d.snapshot()
+        saved = state['telemetry']['obstacle']['data']
+        detour = state['telemetry']['avoidance']['data']
+        self.assertTrue(saved['saved_profile'] and saved['left_open'])
+        self.assertEqual((saved['nearest_mm'], saved['width_mm'], detour['forward_mm']), (208, 100, 611))
+        self.assertIn('departure path', detour['failure'])
+        self.assertEqual(sum(e['kind'] == 'vehicle' for e in state['events']), 1)
 
     def test_subscribes_every_topic(self):
         result=[]

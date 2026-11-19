@@ -52,7 +52,8 @@ static void profile(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out, S5_PROFILE sc
 static S5_PROFILE obstacle(bool left)
 {
     return (S5_PROFILE){.nearest_mm = S5_SCAN_STOP_MM, .front_mm = S5_SCAN_STOP_MM, .width_mm = 90,
-                        .left_mm = left ? 850 : 600, .right_mm = left ? 600 : 850,
+                        .left_mm = 320, .right_mm = 330,
+                        .left_path_mm = left ? 850 : 600, .right_path_mm = left ? 600 : 850,
                         .left_edge_mm = -50, .right_edge_mm = 40,
                         .left_edge_valid = true, .right_edge_valid = true};
 }
@@ -79,8 +80,8 @@ static void reach_inward_turn(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out, boo
     S5_ACTION inward = left ? S5_PIVOT_RIGHT : S5_PIVOT_LEFT;
     S5_PROFILE scan = obstacle(left);
     if (open_side) {
-        if (left) scan.left_mm = S5_OPEN_RANGE;
-        else scan.right_mm = S5_OPEN_RANGE;
+        if (left) scan.left_path_mm = S5_OPEN_RANGE;
+        else scan.right_path_mm = S5_OPEN_RANGE;
     }
     profile(model, in, out, scan);
     assert(model->avoidance.side == (left ? S5_LEFT : S5_RIGHT));
@@ -189,10 +190,10 @@ static void test_unsafe_profile_and_scan_timeout(void)
     VC_INPUT in = track_input();
     VC_OUTPUT out;
     S5_PROFILE scan = obstacle(false);
-    scan.left_mm = S5_UNKNOWN_RANGE;
-    scan.right_mm = 190;
+    scan.left_path_mm = 350;
+    scan.right_path_mm = 190;
     profile(&model, &in, &out, scan);
-    assert(out.stop && model.avoidance.phase == S5_FAILED);
+    assert(out.stop && model.avoidance.phase == S5_FAILED && model.avoidance.failure == S5_FAIL_SIDE);
 
     model = (VC_MODEL){0};
     in = track_input();
@@ -201,8 +202,8 @@ static void test_unsafe_profile_and_scan_timeout(void)
     in.start = false;
     in.obstacle_blocked = in.obstacle_detected = true;
     step(&model, &in, &out, 20);
-    step(&model, &in, &out, 11000);
-    assert(out.stop && model.avoidance.phase == S5_FAILED);
+    step(&model, &in, &out, 14000);
+    assert(out.stop && model.avoidance.phase == S5_FAILED && model.avoidance.failure == S5_FAIL_SCAN_TIMEOUT);
 }
 
 static void test_reentry_limit(void)
@@ -219,16 +220,59 @@ static void test_width_and_diagonal_clearance(void)
 {
     S5_PROFILE scan = obstacle(true);
     unsigned offset, pass;
-    assert(s5_plan_bypass(&scan, &offset, &pass) == S5_LEFT);
+    S5_FAILURE reason;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_LEFT);
     assert(offset == 185 && pass == 165);
     assert(s5_reentry_detection_mm(offset, 60) == 146);
     scan.front_mm = 195; /* Only the shorter right-hand offset fits. */
-    assert(s5_plan_bypass(&scan, &offset, &pass) == S5_RIGHT);
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_RIGHT);
     scan.front_mm = 175;
-    assert(s5_plan_bypass(&scan, &offset, &pass) == S5_NO_SIDE);
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_ROOM);
     scan.front_mm = S5_SCAN_STOP_MM;
     scan.width_mm = S5_UNKNOWN_WIDTH;
-    assert(s5_plan_bypass(&scan, &offset, &pass) == S5_NO_SIDE);
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_WIDTH);
+    scan = obstacle(true);
+    scan.left_path_mm = S5_UNKNOWN_RANGE;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_RIGHT);
+}
+
+static void test_stationary_retry(void)
+{
+    VC_MODEL model = {0};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    S5_PROFILE scan = obstacle(true);
+    scan.width_mm = S5_UNKNOWN_WIDTH;
+    profile(&model, &in, &out, scan);
+    assert(out.maneuver.action == S5_RESCAN && model.avoidance.phase == S5_PROFILE_PATH);
+    step(&model, &in, &out, 20);
+    assert(out.maneuver.action == S5_WAIT);
+    in.avoidance.profile = obstacle(true);
+    in.avoidance.profile_at = in.avoidance.now + 2000;
+    step(&model, &in, &out, 2000);
+    assert(model.avoidance.phase == S5_TURN_OUT && model.avoidance.side == S5_LEFT);
+    start_move(&model, &in, &out, S5_PIVOT_LEFT, 0);
+}
+
+static void test_departure_room_after_retrace(void)
+{
+    S5_AVOID state = {.phase = S5_PROFILE_PATH, .phase_at = 100,
+                      .reverse_available = true, .reverse_long = true};
+    S5_AVOID_INPUT in = {.now = 500, .profile_at = 450, .range_at = 500, .range_mm = 170,
+                         .profile_valid = true, .stopped = true, .range_valid = true,
+                         .line_centered = true, .profile = obstacle(true)};
+    /* The newer forward measurement rules out a departure despite the original profile. */
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_BACK_UP);
+    in.now = in.range_at = 800;
+    S5_AVOID_OUTPUT out = s5_avoid_step(&state, &in);
+    assert(out.action == S5_REVERSE && out.distance_mm == S5_LONG_REVERSE_MM);
+    in.motion = S5_MOTION_DONE;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_PROFILE_PATH);
+    in.now = in.range_at = in.profile_at = 950;
+    in.motion = S5_MOTION_NONE;
+    in.range_mm = 230;
+    in.profile.front_mm = in.profile.nearest_mm = 230;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_TURN_OUT);
 }
 
 static void test_reverse_and_rescan(bool path_clears)
@@ -237,7 +281,8 @@ static void test_reverse_and_rescan(bool path_clears)
     VC_INPUT in = track_input();
     VC_OUTPUT out;
     in.avoidance.line_centered = in.avoidance.can_retrace = true;
-    S5_PROFILE blocked = {.nearest_mm = 90};
+    S5_PROFILE blocked = obstacle(true);
+    blocked.front_mm = blocked.nearest_mm = 90;
     profile(&model, &in, &out, blocked);
     assert(model.avoidance.phase == S5_BACK_UP);
     start_move(&model, &in, &out, S5_REVERSE, S5_REVERSE_MM);
@@ -273,6 +318,8 @@ int main(void)
     test_unsafe_profile_and_scan_timeout();
     test_reentry_limit();
     test_width_and_diagonal_clearance();
+    test_stationary_retry();
+    test_departure_room_after_retrace();
     test_reverse_and_rescan(true);
     test_reverse_and_rescan(false);
     puts("PASS obstacle avoidance, both sides, blocked return retry, recovery, and cancellation");
