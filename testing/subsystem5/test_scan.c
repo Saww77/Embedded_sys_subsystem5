@@ -54,7 +54,7 @@ static void test_scan_and_profile(void)
     assert(s5_scan_target(&scan) == S5_NO_TARGET);
     s5_scan_set(&scan, 24, 140);
     assert(s5_scan_target(&scan) == 24);
-    S5_PROFILE clipped = s5_profile(&scan, 23, 24, 24);
+    S5_PROFILE clipped = s5_profile(&scan, 23, 24, 24, 0);
     assert(clipped.angle_offset_deg + S5_MIN_ANGLE == 150);
     assert(clipped.width_mm == S5_UNKNOWN_WIDTH && !clipped.right_edge_valid);
     s5_scan_set(&scan, 12, 150);
@@ -63,21 +63,37 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 11, 140);
     s5_scan_set(&scan, 13, 150);
     s5_scan_set(&scan, 14, S5_OPEN_RANGE);
-    S5_PROFILE profile = s5_profile(&scan, 10, 14, 12);
+    S5_PROFILE profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.nearest_mm == 140 && profile.angle_offset_deg + S5_MIN_ANGLE == 85);
     assert(profile.width_mm == 25 && profile.right_mm == S5_OPEN_RANGE);
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
-    profile = s5_profile(&scan, 10, 14, 12);
+    profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
     s5_scan_set(&scan, 15, 550);
-    profile = s5_profile(&scan, 10, 15, 12);
+    profile = s5_profile(&scan, 10, 15, 12, 0);
     assert(profile.width_mm == 25 && profile.right_mm == 550);
     assert(profile.right_edge_valid && profile.right_edge_mm == 38);
+}
+
+static void test_observed_span_without_clearance(void)
+{
+    S5_SCAN scan = {0};
+    for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&scan, i, S5_UNKNOWN_RANGE);
+    for (unsigned i = 8; i <= 15; ++i) s5_scan_set(&scan, i, 176);
+    s5_scan_set(&scan, 8, 189); /* 70 degrees, the last hit on the left */
+    unsigned span = 0;
+    S5_PROFILE profile = s5_profile(&scan, 5, 18, S5_CENTRE_INDEX, &span);
+    assert(span == 109 && profile.nearest_mm == 176);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH);
+    assert(!profile.left_edge_valid && !profile.right_edge_valid);
+    profile = s5_profile(&scan, S5_CENTRE_INDEX, S5_CENTRE_INDEX, S5_CENTRE_INDEX, &span);
+    assert(span == 0 && profile.width_mm == S5_UNKNOWN_WIDTH);
 }
 
 int main(void)
 {
     test_echo_pairing();
     test_scan_and_profile();
+    test_observed_span_without_clearance();
     puts("PASS echo pairing, timeout diagnostics, scan packing, off-centre targeting and profile bounds");
 }

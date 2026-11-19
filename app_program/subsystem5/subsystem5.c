@@ -122,15 +122,20 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
 
     aim(S5_CENTRE_ANGLE);
     if (request) vehicle_submit_obstacle_range(s5_hw_ping().range_mm);
-    *profile = s5_profile(&samples, first, last, anchor);
-    if (profile->width_mm == S5_UNKNOWN_WIDTH)
+    unsigned observed_span;
+    *profile = s5_profile(&samples, first, last, anchor, verbose ? &observed_span : NULL);
+    if (profile->width_mm == S5_UNKNOWN_WIDTH) {
         tm_printf((UB*)"%s width=unavailable nearest_distance=%u mm confirmed_edges L=%u R=%u\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->left_edge_valid,
                   (unsigned)profile->right_edge_valid);
-    else
+        if (verbose && observed_span > 0)
+            tm_printf((UB*)"%s observed_echo_span=%u mm. Width unconfirmed.\n",
+                      tag, observed_span);
+    } else {
         tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
                   S5_MIN_ANGLE + profile->angle_offset_deg);
+    }
     return TRUE;
 
 cancelled:

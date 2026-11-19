@@ -36,5 +36,7 @@ void s5_scan_set(S5_SCAN *scan, unsigned index, unsigned range);
 unsigned s5_scan_get(const S5_SCAN *scan, unsigned index);
 unsigned s5_scan_target(const S5_SCAN *scan);
 bool s5_same_obstacle(unsigned range, unsigned reference);
-S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor);
+/* Optionally reports the lateral span between the outermost target echoes. */
+S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor,
+                      unsigned *observed_span_mm);
 #endif

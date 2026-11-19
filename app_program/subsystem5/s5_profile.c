@@ -76,7 +76,8 @@ static S5_EDGE profile_edge(const S5_SCAN *scan, unsigned anchor, unsigned limit
     return edge;
 }
 
-S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor)
+S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor,
+                      unsigned *observed_span_mm)
 {
     S5_EDGE left = profile_edge(scan, anchor, first, -1);
     S5_EDGE right = profile_edge(scan, anchor, last, 1);
@@ -99,10 +100,10 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
         result.right_edge_mm = lateral_mm(right.boundary, s5_scan_get(scan, right.last_hit));
         result.right_edge_valid = true;
     }
-    if (result.left_edge_valid && result.right_edge_valid && left.last_hit < right.last_hit) {
-        int width = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit)) -
-                    lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
-        if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (unsigned)width;
-    }
+    int span = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit)) -
+               lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
+    if (observed_span_mm) *observed_span_mm = span > 0 ? (unsigned)span : 0u;
+    if (result.left_edge_valid && result.right_edge_valid && span > 0 && span <= MAX_WIDTH_MM)
+        result.width_mm = (unsigned)span;
     return result;
 }
