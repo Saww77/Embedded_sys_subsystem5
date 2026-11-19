@@ -69,6 +69,8 @@ static void test_rcwl_no_target(void)
 static void test_scan_and_profile(void)
 {
     _Static_assert(sizeof(S5_SCAN) == 38, "Pack the 25 12-bit samples into 38 bytes");
+    assert(s5_servo_angle(0) == 150);
+    assert(s5_servo_angle(S5_CENTRE_INDEX * S5_FINE_STEP) == 90);
     S5_SCAN scan = {0};
     for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) {
         s5_scan_set(&scan, i, 4000 + i);
@@ -78,7 +80,7 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 24, 140);
     assert(s5_scan_target(&scan) == 24);
     S5_PROFILE clipped = s5_profile(&scan, 23, 24, 24, 0);
-    assert(clipped.angle_offset_deg + S5_MIN_ANGLE == 150);
+    assert(s5_servo_angle(clipped.angle_offset_deg) == 30);
     assert(clipped.width_mm == S5_UNKNOWN_WIDTH && !clipped.right_edge_valid);
     s5_scan_set(&scan, 12, 150);
     assert(s5_scan_target(&scan) == 12);
@@ -87,7 +89,7 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 13, 150);
     s5_scan_set(&scan, 14, S5_OPEN_RANGE);
     S5_PROFILE profile = s5_profile(&scan, 10, 14, 12, 0);
-    assert(profile.nearest_mm == 140 && profile.angle_offset_deg + S5_MIN_ANGLE == 85);
+    assert(profile.nearest_mm == 140 && s5_servo_angle(profile.angle_offset_deg) == 95);
     assert(profile.width_mm == 38 && profile.right_mm == S5_OPEN_RANGE);
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 10, 14, 12, 0);

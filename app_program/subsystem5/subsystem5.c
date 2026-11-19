@@ -66,7 +66,7 @@ static void log_ping(const char *tag, const char *context, unsigned angle, S5_PI
 
 static unsigned read_at(unsigned index, BOOL verbose, bool fine)
 {
-    aim(S5_MIN_ANGLE + index * S5_FINE_STEP);
+    aim(s5_servo_angle(index * S5_FINE_STEP));
     unsigned previous = S5_UNKNOWN_RANGE;
     const bool bench_fine_scan = verbose && fine;
     const unsigned attempts = bench_fine_scan ? 5u : 3u;
@@ -126,7 +126,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
 {
     const char *tag = verbose ? "[S5 BENCH]" : "[S5]";
     S5_SCAN samples = {0};
-    tm_printf((UB*)"%s GP12 coarse sweep 30..150 deg\n", tag);
+    tm_printf((UB*)"%s GP12 coarse sweep 150..30 deg\n", tag);
     for (unsigned i = 0; i < S5_SCAN_POINTS; i += S5_COARSE_STEP) {
         if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
         s5_scan_set(&samples, i, read_at(i, verbose, false));
@@ -148,7 +148,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
 
     unsigned coarse = s5_scan_get(&samples, anchor);
     if (verbose)
-        tm_printf((UB*)"%s fine scan starting at %u deg\n", tag, S5_MIN_ANGLE + anchor * S5_FINE_STEP);
+        tm_printf((UB*)"%s fine scan starting at %u deg\n", tag, s5_servo_angle(anchor * S5_FINE_STEP));
     unsigned fine = read_at(anchor, verbose, true);
     if (!s5_same_obstacle(fine, coarse) || fine > S5_CLEAR_MM) {
         tm_printf((UB*)"%s fine scan could not confirm the %u mm target at %u deg\n",
@@ -180,7 +180,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     } else {
         tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
-                  S5_MIN_ANGLE + profile->angle_offset_deg);
+                  s5_servo_angle(profile->angle_offset_deg));
     }
     return TRUE;
 

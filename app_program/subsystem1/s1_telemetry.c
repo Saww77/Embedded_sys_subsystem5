@@ -47,7 +47,7 @@ static void publish_obstacle(const VEHICLE_SNAPSHOT *s)
     static ER previous_result;
     static uint32_t last_log_at;
     ER result = s1_publish_obstacle(s->near_mm, s->width_mm, s->clear_left_mm,
-                                   s->clear_right_mm, S5_MIN_ANGLE + s->obstacle_angle_offset);
+                                   s->clear_right_mm, s5_servo_angle(s->obstacle_angle_offset));
     account(result);
     BOOL width = s->width_mm != S5_UNKNOWN_WIDTH;
     if (logged && width == previous_width && result == previous_result &&

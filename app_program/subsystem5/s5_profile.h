@@ -15,6 +15,12 @@
 #define S5_UNKNOWN_WIDTH 2047u
 #define S5_PROFILE_TOLERANCE_MM 100u
 
+/* Scan offsets increase from the robot's left to its right. */
+static inline unsigned s5_servo_angle(unsigned scan_offset_deg)
+{
+    return S5_MAX_ANGLE - scan_offset_deg;
+}
+
 typedef struct {
     unsigned nearest_mm : 12;
     unsigned width_mm : 11;
@@ -27,7 +33,7 @@ typedef struct {
     unsigned right_edge_valid : 1;
 } S5_PROFILE;
 
-/* Index zero is 30 degrees, increasing to the right in 5-degree increments. */
+/* Index zero commands 150 degrees (left), decreasing in 5-degree increments toward the right. */
 typedef struct {
     uint8_t bytes[(S5_SCAN_POINTS * 12u + 7u) / 8u];
 } S5_SCAN;
