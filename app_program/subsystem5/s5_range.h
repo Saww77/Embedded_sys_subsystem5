@@ -57,6 +57,18 @@ static inline S5_PING s5_classify_echo(S5_ECHO_STATE state, unsigned pulse_us)
     return (S5_PING){.state = state, .pulse_us = pulse_us, .range_mm = range};
 }
 
+/* Require agreement at a fine-scan bearing and keep the shorter measured range. */
+#define S5_FINE_REPEAT_TOLERANCE_MM 25u
+static inline unsigned s5_confirm_scan_range(unsigned previous, unsigned current)
+{
+    if (previous == S5_OPEN_RANGE && current == S5_OPEN_RANGE) return S5_OPEN_RANGE;
+    if (s5_range_measured(previous) && s5_range_measured(current) &&
+        previous <= current + S5_FINE_REPEAT_TOLERANCE_MM &&
+        current <= previous + S5_FINE_REPEAT_TOLERANCE_MM)
+        return previous < current ? previous : current;
+    return S5_UNKNOWN_RANGE;
+}
+
 typedef struct {
     unsigned range_mm:12;
     unsigned first_open:1;

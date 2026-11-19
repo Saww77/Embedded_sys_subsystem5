@@ -100,10 +100,17 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
         result.right_edge_mm = lateral_mm(right.boundary, s5_scan_get(scan, right.last_hit));
         result.right_edge_valid = true;
     }
-    int span = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit)) -
-               lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
+    int left_hit = lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
+    int right_hit = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit));
+    int span = right_hit - left_hit;
     if (observed_span_mm) *observed_span_mm = span > 0 ? (unsigned)span : 0u;
-    if (result.left_edge_valid && result.right_edge_valid && span > 0 && span <= MAX_WIDTH_MM)
-        result.width_mm = (unsigned)span;
+    if (result.left_edge_valid && result.right_edge_valid) {
+        /* Adjacent hit/miss bearings bracket an edge. Use their midpoint for
+         * width, and keep the outer bearing above for bypass clearance. */
+        int left_twice = left_hit + (left.boundary + 1u == left.last_hit ? result.left_edge_mm : left_hit);
+        int right_twice = right_hit + (right.boundary == right.last_hit + 1u ? result.right_edge_mm : right_hit);
+        int width = (right_twice - left_twice + 1) / 2;
+        if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (unsigned)width;
+    }
     return result;
 }

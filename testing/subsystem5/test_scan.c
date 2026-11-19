@@ -88,13 +88,13 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 14, S5_OPEN_RANGE);
     S5_PROFILE profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.nearest_mm == 140 && profile.angle_offset_deg + S5_MIN_ANGLE == 85);
-    assert(profile.width_mm == 25 && profile.right_mm == S5_OPEN_RANGE);
+    assert(profile.width_mm == 38 && profile.right_mm == S5_OPEN_RANGE);
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
     s5_scan_set(&scan, 15, 550);
     profile = s5_profile(&scan, 10, 15, 12, 0);
-    assert(profile.width_mm == 25 && profile.right_mm == 550);
+    assert(profile.width_mm == 31 && profile.right_mm == 550);
     assert(profile.right_edge_valid && profile.right_edge_mm == 38);
 }
 
@@ -113,11 +113,30 @@ static void test_observed_span_without_clearance(void)
     assert(span == 0 && profile.width_mm == S5_UNKNOWN_WIDTH);
 }
 
+static void test_repeat_and_narrow_target(void)
+{
+    assert(s5_confirm_scan_range(160, 170) == 160);
+    assert(s5_confirm_scan_range(160, 210) == S5_UNKNOWN_RANGE);
+    assert(s5_confirm_scan_range(160, S5_OPEN_RANGE) == S5_UNKNOWN_RANGE);
+    assert(s5_confirm_scan_range(S5_UNKNOWN_RANGE, S5_OPEN_RANGE) == S5_UNKNOWN_RANGE);
+    assert(s5_confirm_scan_range(S5_OPEN_RANGE, S5_OPEN_RANGE) == S5_OPEN_RANGE);
+
+    S5_SCAN scan = {0};
+    s5_scan_set(&scan, 11, S5_OPEN_RANGE);
+    s5_scan_set(&scan, 12, 300);
+    s5_scan_set(&scan, 13, S5_OPEN_RANGE);
+    unsigned span;
+    S5_PROFILE profile = s5_profile(&scan, 11, 13, 12, &span);
+    assert(span == 0 && profile.width_mm == 26);
+    assert(profile.left_edge_mm == -26 && profile.right_edge_mm == 26);
+}
+
 int main(void)
 {
     test_echo_pairing();
     test_rcwl_no_target();
     test_scan_and_profile();
     test_observed_span_without_clearance();
+    test_repeat_and_narrow_target();
     puts("PASS echo pairing, timeout diagnostics, scan packing, off-centre targeting and profile bounds");
 }
