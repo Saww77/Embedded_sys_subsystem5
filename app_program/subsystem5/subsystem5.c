@@ -68,7 +68,9 @@ static unsigned read_at(unsigned index, BOOL verbose, bool fine)
 {
     aim(S5_MIN_ANGLE + index * S5_FINE_STEP);
     unsigned previous = S5_UNKNOWN_RANGE;
-    for (unsigned attempt = 0; attempt < 3u; ++attempt) {
+    const bool bench_fine_scan = verbose && fine;
+    const unsigned attempts = bench_fine_scan ? 5u : 3u;
+    for (unsigned attempt = 0; attempt < attempts; ++attempt) {
         if (attempt) tk_dly_tsk(PING_INTERVAL_MS);
         S5_PING ping = s5_hw_ping();
         if (verbose) log_ping("[S5 BENCH]", attempt ? "recheck" : "scan", servo_angle, ping);
@@ -79,19 +81,21 @@ static unsigned read_at(unsigned index, BOOL verbose, bool fine)
         /* A missed ping can separate two matching measured echoes.
          * Open space still needs two consecutive results. */
         if (!s5_range_available(ping.range_mm) && s5_range_measured(previous)) continue;
-        if (attempt && !s5_range_available(ping.range_mm)) break;
+        if (attempt && !bench_fine_scan && !s5_range_available(ping.range_mm)) break;
         previous = ping.range_mm;
     }
     return S5_UNKNOWN_RANGE;
 }
 
-/* Probe up to two bearings beyond a missing return to find the background. */
+/* Vehicle scans stop after three missing bearings. The stationary bench
+ * can search to the sweep limit for a confirmed background return. */
 static unsigned scan_edge(S5_SCAN *samples, unsigned anchor, unsigned reference,
                           int step, BOOL verbose, const uint32_t *request)
 {
     int index = (int)anchor;
     unsigned misses = 0;
-    while (index + step >= 0 && index + step < (int)S5_SCAN_POINTS && misses < 3u) {
+    while (index + step >= 0 && index + step < (int)S5_SCAN_POINTS &&
+           (verbose || misses < 3u)) {
         if (request && !vehicle_obstacle_scan_current(*request)) break;
         index += step;
         unsigned range = read_at((unsigned)index, verbose, true);
@@ -159,7 +163,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
                 tm_printf((UB*)"%s observed_echo_span=%u mm. Width unconfirmed.\n",
                           tag, observed_span);
             if (!profile->left_edge_valid || !profile->right_edge_valid)
-                tm_printf((UB*)"%s Use a narrow box 250-280 mm ahead. Aim past each edge at a background over %u mm farther away.\n",
+                tm_printf((UB*)"%s Use a box narrow enough to see past both edges, with a background over %u mm farther away.\n",
                           tag, S5_PROFILE_TOLERANCE_MM);
         }
     } else {
