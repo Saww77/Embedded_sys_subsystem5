@@ -3,11 +3,14 @@
 #define BODY_MARGIN_MM 135u
 #define MAX_OFFSET_MM 400u
 #define FOLLOW_AHEAD_MARGIN_MM 90u
-#define MAX_PASS_MM 300u
 #define RETRY_STEP_MM 60u
 #define MOTION_SETTLE_MS 260u
 #define SCAN_TIMEOUT_MS 11000u
 #define PHASE_TIMEOUT_MS 6500u
+
+_Static_assert(S5_CLEAR_MM + FOLLOW_AHEAD_MARGIN_MM <= S5_MAX_PASS_MM,
+               "The maximum profiled distance must fit the bypass budget");
+_Static_assert(S5_MAX_PASS_MM < 512u, "Bypass distances must fit the 9-bit fields");
 
 static bool at_or_after(uint32_t time, uint32_t reference)
 {
@@ -37,13 +40,13 @@ void s5_avoid_begin(S5_AVOID *state, uint32_t now)
 static bool safe_side(unsigned clearance, unsigned offset)
 {
     return s5_range_available(clearance) && offset <= MAX_OFFSET_MM &&
-           clearance >= offset + S5_STOP_MM;
+           clearance >= offset + S5_MANEUVER_STOP_MM;
 }
 
 static bool choose_side(S5_AVOID *state, const S5_PROFILE *profile)
 {
     if (profile->nearest_mm < S5_TURN_CLEARANCE_MM ||
-        profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM > MAX_PASS_MM)
+        profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM > S5_MAX_PASS_MM)
         return false;
 
     unsigned left_offset = BODY_MARGIN_MM + (profile->left_edge_mm < 0 ? -profile->left_edge_mm : 0);
@@ -106,7 +109,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         return go(state, S5_COMPLETE, in->now);
     }
     if (forward && (in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING) &&
-        (!range_fresh || in->range_mm <= S5_STOP_MM))
+        (!range_fresh || in->range_mm <= S5_MANEUVER_STOP_MM))
         return fail(state, in->now);
 
     if (phase == S5_FIND_LINE && (in->motion == S5_MOTION_PENDING || in->motion == S5_MOTION_DONE)) {
@@ -149,10 +152,10 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
                         phase == S5_PASS ? state->next_pass_mm :
                         phase == S5_CENTER_LINE ? in->sensor_to_axle_mm :
                         state->offset_mm + S5_SEARCH_MARGIN_MM;
-    if (in->range_mm < distance + S5_STOP_MM) {
-        if (phase != S5_FIND_LINE || state->passed_mm == MAX_PASS_MM)
+    if (in->range_mm < distance + S5_MANEUVER_STOP_MM) {
+        if (phase != S5_FIND_LINE || state->passed_mm == S5_MAX_PASS_MM)
             return fail(state, in->now);
-        unsigned remaining = MAX_PASS_MM - state->passed_mm;
+        unsigned remaining = S5_MAX_PASS_MM - state->passed_mm;
         state->next_pass_mm = remaining < RETRY_STEP_MM ? remaining : RETRY_STEP_MM;
         return go(state, S5_ALIGN_RETRY, in->now);
     }

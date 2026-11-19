@@ -8,8 +8,8 @@
 #define S5_ECHO_TIMEOUT_US 30000u
 #define S5_OPEN_RANGE 4094u
 #define S5_UNKNOWN_RANGE 4095u
-#define S5_STOP_MM 150u
-#define S5_CLEAR_MM 200u
+#define S5_SCAN_STOP_MM 300u
+#define S5_CLEAR_MM 350u
 
 static inline bool s5_range_measured(unsigned range)
 {
@@ -63,7 +63,7 @@ static inline bool s5_accept_range(S5_RANGE_GATE *gate, unsigned range)
     if (!confirm) return false;
     gate->range_mm = s5_range_available(range) ? range : S5_UNKNOWN_RANGE;
     gate->blocked = !s5_range_available(range) ||
-                    range <= (gate->blocked ? S5_CLEAR_MM : S5_STOP_MM);
+                    range <= (gate->blocked ? S5_CLEAR_MM : S5_SCAN_STOP_MM);
     return true;
 }
 

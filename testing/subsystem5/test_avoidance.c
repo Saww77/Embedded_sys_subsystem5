@@ -26,12 +26,17 @@ static void profile(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out, S5_PROFILE sc
     step(model, in, out, 20);
     assert(model->state == VC_FOLLOW_LINE && !out->stop);
     in->start = false;
-    in->avoidance.range_mm = 250;
+    in->avoidance.range_mm = S5_SCAN_STOP_MM + 1;
     step(model, in, out, 20);
     assert(out->left_rpm == 20 && out->right_rpm == 20);
 
+    S5_RANGE_GATE gate = {0};
+    assert(s5_accept_range(&gate, S5_SCAN_STOP_MM + 1) && !gate.blocked);
+    assert(s5_accept_range(&gate, S5_SCAN_STOP_MM) && gate.blocked);
+    assert(s5_accept_range(&gate, S5_CLEAR_MM) && gate.blocked);
+    assert(s5_accept_range(&gate, S5_CLEAR_MM + 1) && !gate.blocked);
     in->obstacle_blocked = in->obstacle_detected = true;
-    in->avoidance.range_mm = 140;
+    in->avoidance.range_mm = S5_SCAN_STOP_MM;
     step(model, in, out, 20);
     assert(out->stop && model->state == VC_AVOIDING && model->avoidance.phase == S5_PROFILE_PATH);
 
@@ -46,7 +51,7 @@ static void profile(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out, S5_PROFILE sc
 
 static S5_PROFILE obstacle(bool left)
 {
-    return (S5_PROFILE){.nearest_mm = 140, .width_mm = 90,
+    return (S5_PROFILE){.nearest_mm = S5_SCAN_STOP_MM, .width_mm = 90,
                         .left_mm = left ? 850 : 600, .right_mm = left ? 600 : 850,
                         .left_edge_mm = -50, .right_edge_mm = 40,
                         .left_edge_valid = true, .right_edge_valid = true};
@@ -91,7 +96,7 @@ static void reach_inward_turn(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out, boo
     end_move(model, in, out);
     start_move(model, in, out, inward, 0);
     end_move(model, in, out);
-    start_move(model, in, out, S5_ADVANCE, 230);
+    start_move(model, in, out, S5_ADVANCE, 390);
     end_move(model, in, out);
     start_move(model, in, out, inward, 0);
     end_move(model, in, out);
@@ -206,7 +211,7 @@ static void test_unsafe_profile_and_scan_timeout(void)
 static void test_reentry_limit(void)
 {
     S5_AVOID model = {.phase = S5_FIND_LINE, .side = S5_LEFT,
-                     .offset_mm = 185, .passed_mm = 300};
+                     .offset_mm = 185, .passed_mm = S5_MAX_PASS_MM};
     S5_AVOID_INPUT in = {.now = 300, .range_at = 300, .stopped = true,
                          .range_valid = true, .range_mm = 240};
     S5_AVOID_OUTPUT out = s5_avoid_step(&model, &in);
@@ -230,7 +235,7 @@ static void test_reverse_and_rescan(bool path_clears)
 
     if (path_clears) {
         in.avoidance.profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
-        in.avoidance.range_mm = 300;
+        in.avoidance.range_mm = S5_CLEAR_MM + 1;
         in.obstacle_detected = in.obstacle_blocked = false;
     }
     in.avoidance.profile_at = in.avoidance.now + 2000;

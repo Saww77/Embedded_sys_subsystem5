@@ -59,6 +59,28 @@ static unsigned read_at(unsigned index, BOOL verbose)
     return S5_UNKNOWN_RANGE;
 }
 
+/* Probe up to two bearings beyond a missing return to find the background. */
+static unsigned scan_edge(S5_SCAN *samples, unsigned anchor, unsigned reference,
+                          int step, BOOL verbose, const uint32_t *request)
+{
+    int index = (int)anchor;
+    unsigned misses = 0;
+    while (index + step >= 0 && index + step < (int)S5_SCAN_POINTS && misses < 3u) {
+        if (request && !vehicle_obstacle_scan_current(*request)) break;
+        index += step;
+        unsigned range = read_at((unsigned)index, verbose);
+        s5_scan_set(samples, (unsigned)index, range);
+        if (!s5_range_available(range)) {
+            ++misses;
+        } else if (!s5_same_obstacle(range, reference)) {
+            break;
+        } else {
+            misses = 0;
+        }
+    }
+    return (unsigned)index;
+}
+
 static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *request)
 {
     const char *tag = verbose ? "[S5 BENCH]" : "[S5]";
@@ -94,28 +116,19 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     }
     s5_scan_set(&samples, anchor, fine);
 
-    /* Walk outward at 5-degree resolution until each edge is bracketed. */
-    unsigned first = anchor, last = anchor;
-    while (first > 0 && s5_same_obstacle(s5_scan_get(&samples, first), fine)) {
-        if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
-        unsigned range = read_at(--first, verbose);
-        s5_scan_set(&samples, first, range);
-    }
-    while (last + 1u < S5_SCAN_POINTS && s5_same_obstacle(s5_scan_get(&samples, last), fine)) {
-        if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
-        unsigned range = read_at(++last, verbose);
-        s5_scan_set(&samples, last, range);
-    }
+    unsigned first = scan_edge(&samples, anchor, fine, -1, verbose, request);
+    unsigned last = scan_edge(&samples, anchor, fine, 1, verbose, request);
+    if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
 
     aim(S5_CENTRE_ANGLE);
     if (request) vehicle_submit_obstacle_range(s5_hw_ping().range_mm);
     *profile = s5_profile(&samples, first, last, anchor);
     if (profile->width_mm == S5_UNKNOWN_WIDTH)
-        tm_printf((UB*)"%s width unavailable: nearest=%u mm edges L=%u R=%u (1=resolved)\n",
+        tm_printf((UB*)"%s width=unavailable nearest_distance=%u mm confirmed_edges L=%u R=%u\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->left_edge_valid,
                   (unsigned)profile->right_edge_valid);
     else
-        tm_printf((UB*)"%s profile nearest=%u mm width=%u mm angle=%u deg\n",
+        tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
                   S5_MIN_ANGLE + profile->angle_offset_deg);
     return TRUE;
@@ -155,7 +168,7 @@ static void scan_task(INT stacd, void *exinf)
     (void)exinf;
     setup();
     tm_printf((UB*)"[S5] GP16 trigger, GP17 echo. Entry=%u mm, clear=%u mm\n",
-              S5_STOP_MM, S5_CLEAR_MM);
+              S5_SCAN_STOP_MM, S5_CLEAR_MM);
 
     for (;;) {
         S5_PING ping = s5_hw_ping();
@@ -179,7 +192,6 @@ static void scan_task(INT stacd, void *exinf)
 
 #if APP_S5_BENCH
 #define BENCH_PING_MS 350
-#define BENCH_RELEASE_MM 250u
 #define BENCH_CONFIRMATIONS 2u
 #define BENCH_TIMEOUT_CONFIRMATIONS 3u
 
@@ -195,8 +207,8 @@ static unsigned bench_wait_for_echo(BOOL want_target)
 
         unsigned range = ping.range_mm;
         bool measured = s5_range_measured(range);
-        bool matches = want_target ? measured && range <= S5_CLEAR_MM :
-                       range == S5_OPEN_RANGE || (measured && range > BENCH_RELEASE_MM);
+        bool matches = want_target ? measured && range <= S5_SCAN_STOP_MM :
+                       range == S5_OPEN_RANGE || (measured && range > S5_CLEAR_MM);
         confirmed = matches ? confirmed + 1u : 0u;
         if (confirmed == BENCH_CONFIRMATIONS) return range;
         /* In this motor-off test a missing target can restart the detector. */
@@ -212,7 +224,7 @@ static unsigned bench_wait_for_echo(BOOL want_target)
 EXPORT void subsystem5_bench(void)
 {
     tm_printf((UB*)"[S5 BENCH] GP12 servo, GP16 trigger, GP17 echo. Drive outputs off.\n");
-    tm_printf((UB*)"[S5 BENCH] Scan starts after two forward echoes within %u mm.\n", S5_CLEAR_MM);
+    tm_printf((UB*)"[S5 BENCH] Scan starts after two forward echoes within %u mm.\n", S5_SCAN_STOP_MM);
     setup();
     for (;;) {
         unsigned detected = bench_wait_for_echo(TRUE);
@@ -220,7 +232,7 @@ EXPORT void subsystem5_bench(void)
         S5_PROFILE profile;
         (void)scan_obstacle(&profile, TRUE, NULL);
         tm_printf((UB*)"[S5 BENCH] Servo centred. Remove target or move it beyond %u mm to rearm.\n",
-                  BENCH_RELEASE_MM);
+                  S5_CLEAR_MM);
         (void)bench_wait_for_echo(FALSE);
         tm_printf((UB*)"[S5 BENCH] Test rearmed.\n");
     }

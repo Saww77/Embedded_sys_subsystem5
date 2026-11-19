@@ -269,7 +269,7 @@ static void vehicle_service_once(void)
     in.left_rpm = data.left_rpm;
     in.right_rpm = data.right_rpm;
     in.obstacle_blocked = obstacle_blocked(now);
-    in.obstacle_detected = range_valid(now) && obstacle_range.range_mm <= S5_STOP_MM;
+    in.obstacle_detected = range_valid(now) && obstacle_range.range_mm <= S5_SCAN_STOP_MM;
     in.avoidance = (S5_AVOID_INPUT){
         .now = now, .range_at = obstacle_range_at, .range_mm = obstacle_range.range_mm,
         .range_valid = range_valid(now), .profile_at = full_profile_at,

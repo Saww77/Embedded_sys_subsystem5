@@ -6,7 +6,9 @@
 #include "s5_profile.h"
 
 #define S5_RANGE_MAX_AGE_MS 300u
-#define S5_SLOW_RANGE_MM 300u
+#define S5_SLOW_RANGE_MM 450u
+#define S5_MANEUVER_STOP_MM 150u
+#define S5_MAX_PASS_MM 500u
 #define S5_APPROACH_RPM 20u
 #define S5_TURN_CLEARANCE_MM 100u
 #define S5_REVERSE_MM 30u

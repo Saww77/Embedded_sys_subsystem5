@@ -69,6 +69,10 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 10, 14, 12);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
+    s5_scan_set(&scan, 15, 550);
+    profile = s5_profile(&scan, 10, 15, 12);
+    assert(profile.width_mm == 25 && profile.right_mm == 550);
+    assert(profile.right_edge_valid && profile.right_edge_mm == 38);
 }
 
 int main(void)

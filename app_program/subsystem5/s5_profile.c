@@ -54,33 +54,54 @@ bool s5_same_obstacle(unsigned range, unsigned reference)
            reference <= range + S5_PROFILE_TOLERANCE_MM;
 }
 
+typedef struct {
+    unsigned last_hit, boundary, clearance;
+} S5_EDGE;
+
+static S5_EDGE profile_edge(const S5_SCAN *scan, unsigned anchor, unsigned limit, int step)
+{
+    S5_EDGE edge = {.last_hit = anchor, .clearance = S5_UNKNOWN_RANGE};
+    unsigned reference = s5_scan_get(scan, anchor);
+    for (int i = (int)anchor; i != (int)limit;) {
+        i += step;
+        unsigned range = s5_scan_get(scan, (unsigned)i);
+        if (!s5_range_available(range)) continue;
+        if (!s5_same_obstacle(range, reference)) {
+            edge.boundary = (unsigned)i;
+            edge.clearance = range;
+            break;
+        }
+        edge.last_hit = (unsigned)i;
+    }
+    return edge;
+}
+
 S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor)
 {
-    unsigned near = anchor, left = anchor, right = anchor;
-    unsigned reference = s5_scan_get(scan, anchor);
-    while (left > first && s5_same_obstacle(s5_scan_get(scan, left - 1), reference)) --left;
-    while (right < last && s5_same_obstacle(s5_scan_get(scan, right + 1), reference)) ++right;
-    for (unsigned i = left; i <= right; ++i) {
+    S5_EDGE left = profile_edge(scan, anchor, first, -1);
+    S5_EDGE right = profile_edge(scan, anchor, last, 1);
+    unsigned near = anchor;
+    for (unsigned i = left.last_hit; i <= right.last_hit; ++i) {
         if (s5_scan_get(scan, i) < s5_scan_get(scan, near)) near = i;
     }
     S5_PROFILE result = {
         .nearest_mm = s5_scan_get(scan, near), .angle_offset_deg = near * S5_FINE_STEP,
         .width_mm = S5_UNKNOWN_WIDTH,
-        .left_mm = left > first ? s5_scan_get(scan, left - 1) : S5_UNKNOWN_RANGE,
-        .right_mm = right < last ? s5_scan_get(scan, right + 1) : S5_UNKNOWN_RANGE
+        .left_mm = left.clearance,
+        .right_mm = right.clearance
     };
-    /* Use the first bearing beyond each clustered edge as the lateral bound. */
-    if (left > first && s5_range_available(result.left_mm)) {
-        result.left_edge_mm = lateral_mm(left - 1, s5_scan_get(scan, left));
+    /* The first usable bearing beyond each edge supplies a conservative lateral bound. */
+    if (s5_range_available(left.clearance)) {
+        result.left_edge_mm = lateral_mm(left.boundary, s5_scan_get(scan, left.last_hit));
         result.left_edge_valid = true;
     }
-    if (right < last && s5_range_available(result.right_mm)) {
-        result.right_edge_mm = lateral_mm(right + 1, s5_scan_get(scan, right));
+    if (s5_range_available(right.clearance)) {
+        result.right_edge_mm = lateral_mm(right.boundary, s5_scan_get(scan, right.last_hit));
         result.right_edge_valid = true;
     }
-    if (result.left_edge_valid && result.right_edge_valid && left < right) {
-        int width = lateral_mm(right, s5_scan_get(scan, right)) -
-                    lateral_mm(left, s5_scan_get(scan, left));
+    if (result.left_edge_valid && result.right_edge_valid && left.last_hit < right.last_hit) {
+        int width = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit)) -
+                    lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
         if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (unsigned)width;
     }
     return result;
