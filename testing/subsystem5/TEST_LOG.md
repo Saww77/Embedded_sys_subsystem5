@@ -2,7 +2,7 @@
 
 ## Integration
 
-The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on core 1. The ISR pairs rising and falling edges against each trigger's 30 ms deadline. A missing, late or malformed echo makes the ping unavailable. The sweep retries after 60 ms at the same bearing. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
+The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on core 1. The ISR applies a 30 ms deadline to distance readings and watches an in-progress pulse for up to 60 ms. A complete 46.9–47.3 ms pulse matches the RCWL-9610A no-target response observed on the car. Two consecutive open results confirm that bearing. Missing, malformed and other late echoes are unavailable. The sweep retries after 60 ms at the same bearing. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
 
 1. The forward monitor caps approach targets at 20 RPM within 450 mm. At or below 300 mm the controller stops the drive, waits for the wheels to settle, then sweeps 30°, 60°, 90°, 120°, and 150°.
 2. If an obstacle lies within 350 mm, the fine scan returns to its bearing. A forward hit takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan expands in 5° steps until it brackets each edge or reaches the scan limit. After a missed bearing it checks up to two more bearings for a usable background return.
@@ -18,13 +18,13 @@ With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repos
 
 For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, keep a narrow flat-front box stationary at 25–30 cm. Use a broad, flat background about 60–80 cm from the sensor to provide valid returns beside the box. A resolved profile prints `width=… mm`. The `nearest_distance` field reports how far away the closest return is. The scan reports `width=unavailable` when it cannot bracket the target with valid echoes. When the scan sees the object across several bearings, the bench also prints `observed_echo_span`, the lateral span between its outermost valid target echoes. Confirming a bypass requires a usable clearance return on the chosen side.
 
-`rise timeout` means no rising edge was captured within 30 ms. `fall timeout` means the echo started and did not finish within that window. `late fall` reports the measured pulse duration when an echo that started on time ends between 30 and 60 ms in the bench build. The range remains unavailable. `high before trigger` means GP17 was already high at the start of the ping. If repeated with a flat target straight ahead, check GP16, level-shifted GP17, sensor supply and common ground. If the servo stays still when the commanded angle changes, check the GP12 header, plug orientation and servo supply.
+`rise timeout` means no rising edge was captured within 30 ms. `fall timeout` means the echo started and did not finish within that window. `late fall` reports the measured pulse duration when an echo that started on time ends between 30 and 60 ms. The range remains unavailable. The observed RCWL-9610A pulse is reported as `no target` with `range=open`. `high before trigger` means GP17 was already high at the start of the ping. If repeated with a flat target straight ahead, check GP16, level-shifted GP17, sensor supply and common ground. If the servo stays still when the commanded angle changes, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 
 | Field | Range | Representation |
 |---|---|---|
-| Captured pulse and state | 0–59,999 µs, 6 capture states and 6 echo outcomes | 16 bits for pulse duration and 3 bits for state in both ISR and task storage |
+| Captured pulse and state | 0–59,999 µs, 6 capture states and 7 echo outcomes | 16 bits for pulse duration and 3 bits for state in both ISR and task storage |
 | Trigger, rise and freshness timestamps | 0–2³² − 1 µs or ms, rolling | 32 bits each, using wrap-safe elapsed time |
 | Sweep range and closest distance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits per entry and closest-distance field; 12 bits on wire for measured distance |
 | Sweep bearing | 30°–150° in 5° steps | Implicit scan index 0–24; profile and wire store degrees minus 30 in 7 bits |
@@ -79,6 +79,8 @@ cc -std=c11 -Wall -Wextra -Werror testing/subsystem5/test_avoidance.c \
   -o /tmp/test_avoidance
 /tmp/test_avoidance
 ```
+
+The RCWL-9610A bench replay used obstacle echoes around 160–170 mm and consecutive open pulses around 47.1 ms. It reported a 116 mm width and a 90° left turn. Host tests also confirmed that a single open pulse or an unknown echo cannot release the interlock. The updated bench and MQTT firmware built successfully. Track testing is pending.
 
 ## Workflow revision verification
 

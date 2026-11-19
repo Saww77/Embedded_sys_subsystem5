@@ -19,6 +19,7 @@ static const char *const echo_status[] = {
     [S5_ECHO_TIMING] = "timing fault",
     [S5_ECHO_FALL_TIMEOUT] = "fall timeout",
     [S5_ECHO_LATE] = "late fall",
+    [S5_ECHO_NO_TARGET] = "no target",
 };
 
 static void aim(unsigned angle)

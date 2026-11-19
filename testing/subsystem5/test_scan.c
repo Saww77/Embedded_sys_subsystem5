@@ -47,6 +47,25 @@ static void test_echo_pairing(void)
     assert(s5_classify_echo(S5_ECHO_PULSE, 25000).range_mm == S5_OPEN_RANGE);
 }
 
+static void test_rcwl_no_target(void)
+{
+    S5_ECHO_CAPTURE capture = {.triggered_at = 100, .state = S5_CAPTURE_RISE};
+    s5_capture_edge(&capture, 400, true, false, S5_ECHO_OBSERVE_US);
+    s5_capture_edge(&capture, 47495, false, true, S5_ECHO_OBSERVE_US);
+    S5_PING ping = s5_capture_result(&capture, 47495, true, false);
+    assert(ping.state == S5_ECHO_NO_TARGET && ping.pulse_us == 47095);
+    assert(ping.range_mm == S5_OPEN_RANGE);
+    assert(s5_range_from_echo(ping.pulse_us) == S5_UNKNOWN_RANGE);
+    assert(s5_classify_echo(S5_ECHO_LATE, 46899).range_mm == S5_UNKNOWN_RANGE);
+    assert(s5_classify_echo(S5_ECHO_LATE, 47301).range_mm == S5_UNKNOWN_RANGE);
+
+    S5_RANGE_GATE gate = {.range_mm = 160, .blocked = true};
+    assert(!s5_accept_range(&gate, ping.range_mm) && gate.blocked);
+    assert(s5_accept_range(&gate, S5_UNKNOWN_RANGE) && gate.blocked);
+    assert(!s5_accept_range(&gate, ping.range_mm) && gate.blocked);
+    assert(s5_accept_range(&gate, ping.range_mm) && !gate.blocked);
+}
+
 static void test_scan_and_profile(void)
 {
     _Static_assert(sizeof(S5_SCAN) == 38, "Pack the 25 12-bit samples into 38 bytes");
@@ -97,6 +116,7 @@ static void test_observed_span_without_clearance(void)
 int main(void)
 {
     test_echo_pairing();
+    test_rcwl_no_target();
     test_scan_and_profile();
     test_observed_span_without_clearance();
     puts("PASS echo pairing, timeout diagnostics, scan packing, off-centre targeting and profile bounds");
