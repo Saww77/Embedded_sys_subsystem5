@@ -18,13 +18,13 @@ With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repos
 
 For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, keep a narrow flat-front box stationary at 25–30 cm. Use a broad, flat background about 60–80 cm from the sensor to provide valid returns beside the box. A resolved profile prints `width=… mm`. The `nearest_distance` field reports how far away the closest return is. The scan reports `width=unavailable` when it cannot bracket the target with valid echoes. When the scan sees the object across several bearings, the bench also prints `observed_echo_span`, the lateral span between its outermost valid target echoes. Confirming a bypass requires a usable clearance return on the chosen side.
 
-`rise timeout` means no rising edge was captured within 30 ms. `fall timeout` means the echo started and did not finish within that window. `high before trigger` means GP17 was already high at the start of the ping. If repeated with a flat target straight ahead, check GP16, level-shifted GP17, sensor supply and common ground. If the servo stays still when the commanded angle changes, check the GP12 header, plug orientation and servo supply.
+`rise timeout` means no rising edge was captured within 30 ms. `fall timeout` means the echo started and did not finish within that window. `late fall` reports the measured pulse duration when an echo that started on time ends between 30 and 60 ms in the bench build. The range remains unavailable. `high before trigger` means GP17 was already high at the start of the ping. If repeated with a flat target straight ahead, check GP16, level-shifted GP17, sensor supply and common ground. If the servo stays still when the commanded angle changes, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 
 | Field | Range | Representation |
 |---|---|---|
-| Captured pulse and state | 0–29,999 µs, 5 capture states and 5 echo outcomes | 15 bits for pulse duration and 3 bits for state in both ISR and task storage |
+| Captured pulse and state | 0–59,999 µs, 6 capture states and 6 echo outcomes | 16 bits for pulse duration and 3 bits for state in both ISR and task storage |
 | Trigger, rise and freshness timestamps | 0–2³² − 1 µs or ms, rolling | 32 bits each, using wrap-safe elapsed time |
 | Sweep range and closest distance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits per entry and closest-distance field; 12 bits on wire for measured distance |
 | Sweep bearing | 30°–150° in 5° steps | Implicit scan index 0–24; profile and wire store degrees minus 30 in 7 bits |

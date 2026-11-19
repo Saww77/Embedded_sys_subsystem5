@@ -7,29 +7,33 @@ static void test_echo_pairing(void)
 {
     _Static_assert(sizeof(S5_PING) == 4, "The echo result fits in four bytes");
     S5_ECHO_CAPTURE capture = {.triggered_at = UINT32_MAX - 50};
-    s5_capture_edge(&capture, UINT32_MAX - 20, true, false);
+    s5_capture_edge(&capture, UINT32_MAX - 20, true, false, S5_ECHO_TIMEOUT_US);
     assert(capture.state == S5_CAPTURE_IDLE);
     capture.state = S5_CAPTURE_RISE;
-    s5_capture_edge(&capture, 20, true, false);
-    s5_capture_edge(&capture, 895, false, true);
+    s5_capture_edge(&capture, 20, true, false, S5_ECHO_TIMEOUT_US);
+    s5_capture_edge(&capture, 895, false, true, S5_ECHO_TIMEOUT_US);
     assert(capture.state == S5_CAPTURE_DONE && capture.pulse_us == 875);
     S5_PING measured = s5_capture_result(&capture, 895, true, false);
     assert(measured.state == S5_ECHO_PULSE && measured.range_mm == 150);
-    s5_capture_edge(&capture, 901, true, false);
+    s5_capture_edge(&capture, 901, true, false, S5_ECHO_TIMEOUT_US);
     assert(capture.pulse_us == 875);
 
     capture = (S5_ECHO_CAPTURE){.triggered_at = 100, .state = S5_CAPTURE_RISE};
-    s5_capture_edge(&capture, 110, false, true);
+    s5_capture_edge(&capture, 110, false, true, S5_ECHO_TIMEOUT_US);
     assert(capture.state == S5_CAPTURE_BAD);
     capture.state = S5_CAPTURE_RISE;
-    s5_capture_edge(&capture, 110, true, true);
+    s5_capture_edge(&capture, 110, true, true, S5_ECHO_TIMEOUT_US);
     assert(capture.state == S5_CAPTURE_BAD);
     capture.state = S5_CAPTURE_RISE;
-    s5_capture_edge(&capture, 120, true, false);
-    s5_capture_edge(&capture, 30100, false, true);
+    s5_capture_edge(&capture, 120, true, false, S5_ECHO_TIMEOUT_US);
+    s5_capture_edge(&capture, 30100, false, true, S5_ECHO_TIMEOUT_US);
     assert(capture.state == S5_CAPTURE_FALL); /* trailing edge arrived too late */
     S5_PING fall = s5_capture_result(&capture, 30100, true, false);
     assert(fall.state == S5_ECHO_FALL_TIMEOUT && fall.range_mm == S5_UNKNOWN_RANGE);
+    s5_capture_edge(&capture, 38120, false, true, 60000);
+    S5_PING late = s5_capture_result(&capture, 38120, true, false);
+    assert(late.state == S5_ECHO_LATE && late.pulse_us == 38000);
+    assert(late.range_mm == S5_UNKNOWN_RANGE);
     capture.state = S5_CAPTURE_RISE;
     S5_PING rise = s5_capture_result(&capture, 30100, true, false);
     assert(rise.state == S5_ECHO_QUIET && rise.range_mm == S5_UNKNOWN_RANGE);

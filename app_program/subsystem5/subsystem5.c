@@ -18,6 +18,7 @@ static const char *const echo_status[] = {
     [S5_ECHO_HIGH] = "high before trigger",
     [S5_ECHO_TIMING] = "timing fault",
     [S5_ECHO_FALL_TIMEOUT] = "fall timeout",
+    [S5_ECHO_LATE] = "late fall",
 };
 
 static void aim(unsigned angle)
@@ -217,7 +218,8 @@ static unsigned bench_wait_for_echo(BOOL want_target)
         confirmed = matches ? confirmed + 1u : 0u;
         if (confirmed == BENCH_CONFIRMATIONS) return range;
         /* In this motor-off test a missing target can restart the detector. */
-        bool timed_out = ping.state == S5_ECHO_QUIET || ping.state == S5_ECHO_FALL_TIMEOUT;
+        bool timed_out = ping.state == S5_ECHO_QUIET || ping.state == S5_ECHO_FALL_TIMEOUT ||
+                         ping.state == S5_ECHO_LATE;
         timeouts = !want_target && timed_out ? timeouts + 1u : 0u;
         if (timeouts == BENCH_TIMEOUT_CONFIRMATIONS) {
             tm_printf((UB*)"[S5 BENCH] Three echo timeouts. Restarting target detection.\n");

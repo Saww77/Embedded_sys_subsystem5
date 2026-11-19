@@ -19,6 +19,11 @@
 #define ECHO_INTR REG32(IO_BANK0_BASE + 0xf0u + ECHO_BANK_OFFSET)
 #define ECHO_ENABLE REG32(echo_irq_base)
 #define ECHO_PENDING REG32(echo_irq_base + 0x20u)
+#if APP_S5_BENCH
+#define ECHO_OBSERVE_US 60000u
+#else
+#define ECHO_OBSERVE_US S5_ECHO_TIMEOUT_US
+#endif
 #define TRIGGER_MIN_US 10u
 #define MICROS REG32(TIMER_TIMERAWL)
 #define STARTUP_POLLS 32768u
@@ -41,7 +46,7 @@ void s5_hw_echo_irq(void)
     if (!edges) return;
     uint32_t now = MICROS;
     ECHO_INTR = edges;
-    s5_capture_edge(&capture, now, (edges & ECHO_RISE) != 0, (edges & ECHO_FALL) != 0);
+    s5_capture_edge(&capture, now, (edges & ECHO_RISE) != 0, (edges & ECHO_FALL) != 0, ECHO_OBSERVE_US);
 }
 
 bool s5_hw_init(void)
@@ -122,7 +127,10 @@ S5_PING s5_hw_ping(void)
 
     /* Bound the wait even if the hardware timebase stops. */
     for (unsigned i = 0; triggered && !idle_high && i < 32; ++i) {
-        if (capture.state >= S5_CAPTURE_DONE || MICROS - capture.triggered_at >= S5_ECHO_TIMEOUT_US) break;
+        unsigned state = capture.state;
+        uint32_t elapsed = MICROS - capture.triggered_at;
+        if (state >= S5_CAPTURE_DONE ||
+            elapsed >= (state == S5_CAPTURE_FALL ? ECHO_OBSERVE_US : S5_ECHO_TIMEOUT_US)) break;
         tk_dly_tsk(1);
     }
 
