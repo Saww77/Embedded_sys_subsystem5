@@ -60,7 +60,8 @@ typedef struct {
     unsigned face_mm;
     unsigned left_hit_deg, left_background_deg;
     unsigned right_hit_deg, right_background_deg;
-    bool off_axis;
+    unsigned left_hit_mm, right_hit_mm;
+    bool off_axis, on_rays;
 } S5_WIDTH_SCAN;
 
 typedef struct {
@@ -78,5 +79,8 @@ unsigned s5_edge_background(const unsigned *ranges, unsigned count, unsigned ref
 /* Optionally reports the angular edge brackets of a measurable flat face. */
 S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor,
                       S5_WIDTH_SCAN *width_scan);
+/* Distance between two measured points whose bearings share an origin. */
+unsigned s5_width_from_corners(unsigned left_mm, unsigned right_mm, unsigned separation_tenths);
+unsigned s5_refined_ray_width(const S5_WIDTH_SCAN *scan);
 unsigned s5_calibrated_width(const S5_WIDTH_SCAN *scan, const S5_WIDTH_CALIBRATION *calibration);
 #endif

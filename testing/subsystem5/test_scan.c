@@ -146,8 +146,15 @@ static void test_box_width_from_ray_brackets(void)
         s5_scan_set(&scan, S5_CENTRE_INDEX - i, face_ranges[i]);
         s5_scan_set(&scan, S5_CENTRE_INDEX + i, face_ranges[i]);
     }
-    S5_PROFILE profile = s5_profile(&scan, 6, 18, S5_CENTRE_INDEX, NULL);
-    assert(profile.width_mm == 220);
+    S5_WIDTH_SCAN width_scan;
+    S5_PROFILE profile = s5_profile(&scan, 6, 18, S5_CENTRE_INDEX, &width_scan);
+    /* At 5-degree resolution the last ray that still sees the face is 25 degrees. */
+    assert(profile.width_mm == 195 && width_scan.on_rays);
+    width_scan.left_hit_deg = width_scan.right_hit_deg = 27;
+    width_scan.left_hit_mm = width_scan.right_hit_mm = 235;
+    assert(s5_refined_ray_width(&width_scan) == 213);
+    width_scan.left_hit_mm = 250;
+    assert(s5_refined_ray_width(&width_scan) == S5_UNKNOWN_WIDTH);
 }
 
 static void test_box_width_with_wide_beam(void)
@@ -162,14 +169,14 @@ static void test_box_width_with_wide_beam(void)
     for (unsigned i = 0; i < sizeof(right) / sizeof(*right); ++i)
         s5_scan_set(&scan, S5_CENTRE_INDEX + i, right[i]);
     S5_PROFILE profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX, NULL);
-    assert(profile.width_mm == 220 && profile.nearest_mm == 209);
+    assert(profile.width_mm == 222 && profile.nearest_mm == 209);
     assert(profile.left_edge_mm == -211 && profile.right_edge_mm == 243);
 
     s5_scan_set(&scan, 3, S5_UNKNOWN_RANGE); /* Missing neighbour on the left. */
     s5_scan_set(&scan, 4, 229);              /* Another bearing still sees the corner. */
     s5_scan_set(&scan, 23, 211);             /* Rightmost echo came from the front. */
     profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX, NULL);
-    assert(profile.width_mm == 220 && profile.width_status == S5_WIDTH_OK);
+    assert(profile.width_mm == 222 && profile.width_status == S5_WIDTH_OK);
 
     s5_scan_set(&scan, S5_CENTRE_INDEX, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX - 1, NULL);
@@ -193,8 +200,8 @@ static void test_narrow_face_at_track_distance(void)
     for (unsigned i = 0; i < sizeof(right) / sizeof(*right); ++i)
         s5_scan_set(&scan, S5_CENTRE_INDEX + i, right[i]);
     S5_PROFILE profile = s5_profile(&scan, 3, 20, S5_CENTRE_INDEX, NULL);
-    /* A 4–5 mm rise from a 215 mm face corresponds to a roughly 87 mm width. */
-    assert(profile.width_mm == 87 && profile.width_status == S5_WIDTH_OK);
+    /* A 4–5 mm rise from a 215 mm face corresponds to a roughly 88 mm width. */
+    assert(profile.width_mm == 88 && profile.width_status == S5_WIDTH_OK);
 
     s5_scan_set(&scan, 20, 219);
     profile = s5_profile(&scan, 3, 20, S5_CENTRE_INDEX, NULL);
@@ -276,7 +283,9 @@ static void test_80_mm_bench_target_with_unstable_corner_ranges(void)
 
     /* Excess angles fitted independently using the measured 80 mm target. */
     S5_WIDTH_CALIBRATION calibration = {381, 306, 185, 195};
-    assert(s5_calibrated_width(&width_scan, &calibration) == 80);
+    assert(width_scan.left_hit_mm == 212 && width_scan.right_hit_mm == 207);
+    assert(s5_width_from_corners(212, 207, 850) == 283);
+    assert(s5_calibrated_width(&width_scan, &calibration) == 87);
     width_scan.face_mm = 206;
     assert(s5_calibrated_width(&width_scan, &calibration) == S5_UNKNOWN_WIDTH);
     width_scan.face_mm = 190;
@@ -284,12 +293,26 @@ static void test_80_mm_bench_target_with_unstable_corner_ranges(void)
     assert(s5_calibrated_width(&width_scan, &calibration) == S5_UNKNOWN_WIDTH);
 
     /* A wider target at the same depth, assuming the same calibrated beam. */
-    width_scan = (S5_WIDTH_SCAN){190, 58, 59, 50, 51, true};
-    assert(s5_calibrated_width(&width_scan, &calibration) == 140);
+    width_scan = (S5_WIDTH_SCAN){
+        .face_mm = 190, .left_hit_deg = 58, .left_background_deg = 59,
+        .right_hit_deg = 50, .right_background_deg = 51,
+        .left_hit_mm = 202, .right_hit_mm = 202, .off_axis = true,
+    };
+    assert(s5_calibrated_width(&width_scan, &calibration) == 139);
+}
+
+static void test_cosine_width(void)
+{
+    assert(s5_width_from_corners(3, 4, 900) == 5);
+    assert(s5_width_from_corners(200, 220, 1800) == 420);
+    assert(s5_width_from_corners(200, 200, 0) == S5_UNKNOWN_WIDTH);
+    assert(s5_width_from_corners(200, 220, 1801) == S5_UNKNOWN_WIDTH);
+    assert(s5_width_from_corners(200, S5_OPEN_RANGE, 900) == S5_UNKNOWN_WIDTH);
 }
 
 int main(void)
 {
+    test_cosine_width();
     test_echo_pairing();
     test_rcwl_no_target();
     test_scan_and_profile();

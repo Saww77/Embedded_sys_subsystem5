@@ -10,10 +10,12 @@
 #define WIDTH_EDGE_CANDIDATES 3u
 #define WIDTH_MAX_SUPPORT_GAP 3u
 #define TENTHS_PER_STEP (S5_FINE_STEP * 10u)
+#define HALF_ANGLE_STEP_TENTHS 20u
+#define COSINE_SCALE (32768 * HALF_ANGLE_STEP_TENTHS / 2u)
 
 _Static_assert(S5_CLEAR_MM <= S5_MAX_PROJECTED_FRONT_MM, "Front projection must cover the obstacle window");
 
-/* sin and cos for 0..75 degrees in steps of 5 degrees, scaled by 1024. */
+/* Sweep sine and cosine tables in 5-degree steps, scaled by 1024. */
 static const unsigned short sine[] = {
     0, 89, 178, 265, 350, 433, 512, 587, 658, 724, 784, 839, 887, 928, 962, 989,
 };
@@ -38,17 +40,73 @@ static int edge_bound_mm(unsigned bearing, unsigned obstacle_depth)
     return bearing < S5_CENTRE_INDEX ? -projection : projection;
 }
 
-static unsigned width_extent_at(unsigned face_mm, unsigned angle_tenths)
+/* Sine of 0..90 degrees at one-degree steps, scaled by 32768. */
+static const uint16_t width_sine[] = {
+    0, 572, 1144, 1715, 2286, 2856, 3425, 3993, 4560, 5126,
+    5690, 6252, 6813, 7371, 7927, 8481, 9032, 9580, 10126, 10668,
+    11207, 11743, 12275, 12803, 13328, 13848, 14365, 14876, 15384, 15886,
+    16384, 16877, 17364, 17847, 18324, 18795, 19261, 19720, 20174, 20622,
+    21063, 21498, 21926, 22348, 22763, 23170, 23571, 23965, 24351, 24730,
+    25102, 25466, 25822, 26170, 26510, 26842, 27166, 27482, 27789, 28088,
+    28378, 28660, 28932, 29197, 29452, 29698, 29935, 30163, 30382, 30592,
+    30792, 30983, 31164, 31336, 31499, 31651, 31795, 31928, 32052, 32166,
+    32270, 32365, 32449, 32524, 32588, 32643, 32688, 32723, 32748, 32763,
+    32768,
+};
+
+static int cosine_tenths(unsigned angle_tenths)
 {
-    unsigned step = angle_tenths / TENTHS_PER_STEP;
-    unsigned fraction = angle_tenths % TENTHS_PER_STEP;
-    unsigned sin_scaled = sine[step] * TENTHS_PER_STEP;
-    unsigned cos_scaled = cosine[step] * TENTHS_PER_STEP;
-    if (fraction) {
-        sin_scaled += (sine[step + 1u] - sine[step]) * fraction;
-        cos_scaled -= (cosine[step] - cosine[step + 1u]) * fraction;
+    /* Interpolate sine at half the angle to retain accuracy close to zero.
+     * cos(angle) = 1 - 2 sin^2(angle / 2). */
+    unsigned step = angle_tenths / HALF_ANGLE_STEP_TENTHS;
+    unsigned fraction = angle_tenths % HALF_ANGLE_STEP_TENTHS;
+    unsigned half_sine = width_sine[step] * HALF_ANGLE_STEP_TENTHS;
+    if (fraction) half_sine += (width_sine[step + 1u] - width_sine[step]) * fraction;
+    int reduction = (int)(((uint64_t)half_sine * half_sine + COSINE_SCALE) / (2u * COSINE_SCALE));
+    return (int)COSINE_SCALE - reduction;
+}
+
+unsigned s5_width_from_corners(unsigned left_mm, unsigned right_mm, unsigned separation_tenths)
+{
+    if (!left_mm || !right_mm || !s5_range_measured(left_mm) || !s5_range_measured(right_mm) ||
+        separation_tenths > 1800u)
+        return S5_UNKNOWN_WIDTH;
+
+    /* Law of cosines, written as (L - R)^2 + 2 L R (1 - cos(angle)).
+     * Keep fractional cosine precision until after multiplying the ranges. */
+    unsigned difference = left_mm >= right_mm ? left_mm - right_mm : right_mm - left_mm;
+    uint64_t scaled_square = (uint64_t)difference * difference * COSINE_SCALE +
+                             (uint64_t)2u * left_mm * right_mm *
+                             (unsigned)((int)COSINE_SCALE - cosine_tenths(separation_tenths));
+    unsigned square = (unsigned)((scaled_square + COSINE_SCALE / 2u) / COSINE_SCALE);
+    unsigned low = 0, high = left_mm + right_mm;
+    while (low < high) {
+        unsigned midpoint = (low + high + 1u) / 2u;
+        if (midpoint * midpoint <= square) low = midpoint;
+        else high = midpoint - 1u;
     }
-    return (face_mm * sin_scaled + cos_scaled / 2u) / cos_scaled;
+    unsigned width = square - low * low > low ? low + 1u : low;
+    return width > 0 && width <= MAX_WIDTH_MM ? width : S5_UNKNOWN_WIDTH;
+}
+
+unsigned s5_refined_ray_width(const S5_WIDTH_SCAN *scan)
+{
+    if (!scan->on_rays || !scan->face_mm || !s5_range_measured(scan->left_hit_mm) ||
+        !s5_range_measured(scan->right_hit_mm) ||
+        scan->left_hit_deg > S5_SCAN_MAX_ANGLE - S5_CENTRE_ANGLE ||
+        scan->right_hit_deg > S5_CENTRE_ANGLE - S5_SCAN_MIN_ANGLE)
+        return S5_UNKNOWN_WIDTH;
+    unsigned left_bearing = scan->left_hit_deg * 10u;
+    unsigned right_bearing = scan->right_hit_deg * 10u;
+    int left_depth = (int)((uint64_t)scan->left_hit_mm *
+                          (unsigned)cosine_tenths(left_bearing) / COSINE_SCALE);
+    int right_depth = (int)((uint64_t)scan->right_hit_mm *
+                           (unsigned)cosine_tenths(right_bearing) / COSINE_SCALE);
+    int face = (int)scan->face_mm;
+    if (left_depth < face - (int)WIDTH_RAY_TOLERANCE_MM || left_depth > face + (int)WIDTH_RAY_TOLERANCE_MM ||
+        right_depth < face - (int)WIDTH_RAY_TOLERANCE_MM || right_depth > face + (int)WIDTH_RAY_TOLERANCE_MM)
+        return S5_UNKNOWN_WIDTH;
+    return s5_width_from_corners(scan->left_hit_mm, scan->right_hit_mm, left_bearing + right_bearing);
 }
 
 unsigned s5_calibrated_width(const S5_WIDTH_SCAN *scan, const S5_WIDTH_CALIBRATION *calibration)
@@ -67,9 +125,9 @@ unsigned s5_calibrated_width(const S5_WIDTH_SCAN *scan, const S5_WIDTH_CALIBRATI
     unsigned right = (scan->right_hit_deg + scan->right_background_deg) * 5u;
     if (left <= calibration->left_excess_tenths || right <= calibration->right_excess_tenths)
         return S5_UNKNOWN_WIDTH;
-    unsigned width = width_extent_at(scan->face_mm, left - calibration->left_excess_tenths) +
-                     width_extent_at(scan->face_mm, right - calibration->right_excess_tenths);
-    return width > 0 && width <= MAX_WIDTH_MM ? width : S5_UNKNOWN_WIDTH;
+    unsigned separation = (left - calibration->left_excess_tenths) +
+                          (right - calibration->right_excess_tenths);
+    return s5_width_from_corners(scan->left_hit_mm, scan->right_hit_mm, separation);
 }
 
 void s5_scan_set(S5_SCAN *scan, unsigned index, unsigned range)
@@ -145,16 +203,23 @@ typedef struct {
     unsigned last_hit, boundary, clearance;
 } S5_EDGE;
 
-static unsigned radial_extent_mm(unsigned range, unsigned face_depth)
+typedef struct {
+    unsigned range_mm, bearing_tenths;
+    bool on_ray;
+} S5_CORNER;
+
+/* Infer the bearing of a stable off-axis echo on the same flat face. */
+static unsigned corner_bearing_tenths(unsigned range, unsigned depth)
 {
-    if (range <= face_depth) return 0;
-    unsigned square = (range - face_depth) * (range + face_depth);
-    unsigned low = 0, high = range;
+    int expected_cosine = (int)((depth * COSINE_SCALE + range / 2u) / range);
+    unsigned low = 0, high = 900;
     while (low < high) {
-        unsigned midpoint = (low + high + 1u) / 2u;
-        if (midpoint * midpoint <= square) low = midpoint;
-        else high = midpoint - 1u;
+        unsigned midpoint = (low + high) / 2u;
+        if (cosine_tenths(midpoint) <= expected_cosine) high = midpoint;
+        else low = midpoint + 1u;
     }
+    if (low && cosine_tenths(low - 1u) - expected_cosine < expected_cosine - cosine_tenths(low))
+        --low;
     return low;
 }
 
@@ -173,8 +238,8 @@ static bool width_ray_matches(unsigned range, unsigned bearing, unsigned face_de
 
 /* A repeated corner echo can be visible at multiple aimed angles. With
  * limited angular evidence, use two ranges that locate the same corner. */
-static bool width_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
-                            unsigned outer, unsigned inner, int step, unsigned *extent)
+static bool corner_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
+                             unsigned outer, unsigned inner, S5_CORNER *corner)
 {
     unsigned range = s5_scan_get(scan, outer), supporting = s5_scan_get(scan, inner);
     if (!s5_same_obstacle(supporting, depth)) return false;
@@ -182,9 +247,9 @@ static bool width_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
     bool outermost = outer == edge.last_hit;
     bool on_ray = width_ray_matches(range, outer, depth);
     if (outermost && on_ray && width_ray_matches(supporting, inner, depth)) {
-        int last = edge_bound_mm(edge.last_hit, depth);
-        int beyond = edge_bound_mm(edge.boundary, depth);
-        *extent = (unsigned)((last + beyond) * step + 1) / 2u;
+        *corner = (S5_CORNER){
+            .range_mm = range, .bearing_tenths = angle_steps(outer) * TENTHS_PER_STEP, .on_ray = true,
+        };
         return true;
     }
 
@@ -193,12 +258,12 @@ static bool width_from_pair(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
     if (supporting < depth + WIDTH_MIN_EDGE_RISE_MM || supporting > range + WIDTH_STABLE_CORNER_MM ||
         range > supporting + WIDTH_STABLE_CORNER_MM)
         return false;
-    *extent = radial_extent_mm(range, depth);
+    *corner = (S5_CORNER){.range_mm = range, .bearing_tenths = corner_bearing_tenths(range, depth)};
     return true;
 }
 
-static bool width_extent_mm(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
-                            int step, unsigned *extent)
+static bool width_corner(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
+                         int step, S5_CORNER *corner)
 {
     unsigned edge_steps = angle_steps(edge.last_hit);
     unsigned last_range = s5_scan_get(scan, edge.last_hit);
@@ -213,7 +278,7 @@ static bool width_extent_mm(const S5_SCAN *scan, S5_EDGE edge, unsigned depth,
         if (last_range > range + WIDTH_STABLE_CORNER_MM) continue;
         for (unsigned gap = 1; gap <= WIDTH_MAX_SUPPORT_GAP && i + gap <= edge_steps; ++gap) {
             unsigned inner = (unsigned)((int)outer - (int)gap * step);
-            if (width_from_pair(scan, edge, depth, outer, inner, step, extent)) return true;
+            if (corner_from_pair(scan, edge, depth, outer, inner, corner)) return true;
         }
     }
     return false;
@@ -317,22 +382,25 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
             .left_background_deg = angle_steps(left.boundary) * S5_FINE_STEP,
             .right_hit_deg = angle_steps(right.last_hit) * S5_FINE_STEP,
             .right_background_deg = angle_steps(right.boundary) * S5_FINE_STEP,
+            .left_hit_mm = s5_scan_get(scan, left.last_hit),
+            .right_hit_mm = s5_scan_get(scan, right.last_hit),
             .off_axis = s5_scan_get(scan, left.last_hit) + WIDTH_RAY_TOLERANCE_MM <
                         face_ray_range(left.last_hit, depth) &&
                         s5_scan_get(scan, right.last_hit) + WIDTH_RAY_TOLERANCE_MM <
                         face_ray_range(right.last_hit, depth),
         };
     }
-    unsigned left_extent, right_extent;
-    bool left_known = width_extent_mm(scan, left, depth, -1, &left_extent);
-    bool right_known = width_extent_mm(scan, right, depth, 1, &right_extent);
+    S5_CORNER left_corner, right_corner;
+    bool left_known = width_corner(scan, left, depth, -1, &left_corner);
+    bool right_known = width_corner(scan, right, depth, 1, &right_corner);
     if (!left_known || !right_known) {
         result.width_status = left_known ? S5_WIDTH_RIGHT_ECHO :
                               right_known ? S5_WIDTH_LEFT_ECHO : S5_WIDTH_BOTH_ECHOES;
         return result;
     }
-    unsigned width = left_extent + right_extent;
-    if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = width;
-    else result.width_status = S5_WIDTH_BOTH_ECHOES;
+    if (width_scan) width_scan->on_rays = left_corner.on_ray && right_corner.on_ray;
+    result.width_mm = s5_width_from_corners(left_corner.range_mm, right_corner.range_mm,
+                                            left_corner.bearing_tenths + right_corner.bearing_tenths);
+    if (result.width_mm == S5_UNKNOWN_WIDTH) result.width_status = S5_WIDTH_BOTH_ECHOES;
     return result;
 }

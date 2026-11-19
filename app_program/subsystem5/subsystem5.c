@@ -127,7 +127,7 @@ static unsigned read_at(unsigned index, BOOL verbose, bool fine, unsigned edge_r
 }
 
 /* Find the echo transition to one degree wherever the returns are consistent. */
-static void refine_width_edge(unsigned *hit, unsigned *background, int side,
+static void refine_width_edge(unsigned *hit, unsigned *hit_mm, unsigned *background, int side,
                               unsigned reference, BOOL verbose, const uint32_t *request)
 {
     while (*background - *hit > 1u) {
@@ -135,9 +135,12 @@ static void refine_width_edge(unsigned *hit, unsigned *background, int side,
         unsigned middle = (*hit + *background) / 2u;
         unsigned angle = (unsigned)((int)S5_CENTRE_ANGLE + side * (int)middle);
         unsigned range = read_bearing(angle, verbose, true, reference);
-        if (s5_same_obstacle(range, reference)) *hit = middle;
-        else if (s5_background_beyond(range, reference)) *background = middle;
-        else break;
+        if (s5_same_obstacle(range, reference)) {
+            *hit = middle;
+            *hit_mm = range;
+        } else if (s5_background_beyond(range, reference)) {
+            *background = middle;
+        } else break;
     }
 }
 
@@ -223,20 +226,24 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     bool calibrated = width_scan.off_axis && width_calibration.min_face_mm &&
                       width_scan.face_mm >= width_calibration.min_face_mm &&
                       width_scan.face_mm <= width_calibration.max_face_mm;
-    if (width_scan.off_axis && (verbose || calibrated)) {
-        refine_width_edge(&width_scan.left_hit_deg, &width_scan.left_background_deg,
-                          1, fine, verbose, request);
-        refine_width_edge(&width_scan.right_hit_deg, &width_scan.right_background_deg,
-                          -1, fine, verbose, request);
+    if (width_scan.on_rays || (width_scan.off_axis && (verbose || calibrated))) {
+        refine_width_edge(&width_scan.left_hit_deg, &width_scan.left_hit_mm,
+                          &width_scan.left_background_deg, 1, fine, verbose, request);
+        refine_width_edge(&width_scan.right_hit_deg, &width_scan.right_hit_mm,
+                          &width_scan.right_background_deg, -1, fine, verbose, request);
         if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
     }
     if (verbose && width_scan.face_mm)
-        tm_printf((UB*)"%s width scan depth=%u mm left=%u..%u deg right=%u..%u deg off_axis=%u\n",
+        tm_printf((UB*)"%s width scan depth=%u mm left=%u..%u deg right=%u..%u deg off_axis=%u hits L=%u R=%u mm\n",
                   tag, width_scan.face_mm, width_scan.left_hit_deg, width_scan.left_background_deg,
-                  width_scan.right_hit_deg, width_scan.right_background_deg, (unsigned)width_scan.off_axis);
+                  width_scan.right_hit_deg, width_scan.right_background_deg, (unsigned)width_scan.off_axis,
+                  width_scan.left_hit_mm, width_scan.right_hit_mm);
     if (calibrated) {
         profile->width_mm = s5_calibrated_width(&width_scan, &width_calibration);
         profile->width_status = profile->width_mm == S5_UNKNOWN_WIDTH ? S5_WIDTH_BOTH_ECHOES : S5_WIDTH_OK;
+    } else if (width_scan.on_rays) {
+        unsigned refined = s5_refined_ray_width(&width_scan);
+        if (refined != S5_UNKNOWN_WIDTH) profile->width_mm = refined;
     }
     profile->left_path_mm = read_at(S5_CENTRE_INDEX - BYPASS_SCAN_STEPS, verbose, true, S5_UNKNOWN_RANGE);
     if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
@@ -268,7 +275,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     } else {
         tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg method=%s\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
-                  s5_servo_angle(profile->angle_offset_deg), calibrated ? "calibrated beam" : "edge geometry");
+                  s5_servo_angle(profile->angle_offset_deg), calibrated ? "calibrated cosine" : "edge cosine");
     }
     return TRUE;
 
