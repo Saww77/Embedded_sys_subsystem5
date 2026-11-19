@@ -10,4 +10,5 @@ ER s2_hw_encoder_init(void);
 /* Call on core 1 from a common IO_BANK0 dispatcher when sharing IRQ13.
  * Acknowledge only the GP2/GP3 encoder rising edges. */
 void s2_encoder_dispatch(void);
+ER app_gpio_irq_init(void);
 #endif

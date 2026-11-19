@@ -33,6 +33,12 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(decode_telemetry('terrain',(125|(2<<11)).to_bytes(2,'little')),dict(height_mm=125,phase=2))
         obstacle=(500|(80<<12)|(200<<23)|(300<<35)).to_bytes(6,'little')
         self.assertEqual(decode_telemetry('obstacle',obstacle),dict(nearest_mm=500,width_mm=80,left_mm=200,right_mm=300))
+    def test_reverse_phase_uses_existing_avoidance_byte(self):
+        self.assertEqual(decode_telemetry('avoidance', b'\x0e'),
+                         dict(phase=14, phase_label='Reversing to rescan', side=None))
+        with self.assertRaises(ValueError):
+            decode_telemetry('avoidance', b'\x0f')
+
     def test_extended_obstacle_sample_and_freshness(self):
         packet = bytes.fromhex('8c f0 ff ff 7f 94 06')
         self.send('obstacle', packet, retained=True)
@@ -78,7 +84,7 @@ class TelemetryTests(unittest.TestCase):
                  ('terrain',(2001).to_bytes(2,'little')),('terrain',b'\x00\xc0'),
                  ('obstacle',(4001).to_bytes(6,'little')),('obstacle',(1<<47).to_bytes(6,'little')),
                  ('motion',(1<<67).to_bytes(9,'little')),('motion',(101<<27).to_bytes(9,'little')),
-                 ('avoidance',b'\x0e'),('avoidance',b'\x31'),('avoidance',b'\x41')]
+                 ('avoidance',b'\x0f'),('avoidance',b'\x31'),('avoidance',b'\x41')]
         for kind,payload in packets:
             with self.subTest(kind=kind,payload=payload):
                 with self.assertRaises(ValueError):decode_telemetry(kind,payload)

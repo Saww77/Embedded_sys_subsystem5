@@ -22,7 +22,7 @@ EXPORT ER subsystem2_init(void);
 EXPORT ER subsystem2_start(void);
 EXPORT void motion_control_task(INT stacd,void *exinf);
 EXPORT void subsystem2_test(void);
-/* Called by your common GPIO dispatcher when S2_OWNS_GPIO_CALLBACK=0. */
+/* Called by the GPIO dispatcher for each encoder edge. */
 void subsystem2_encoder_gpio_irq(unsigned gpio,uint32_t events);
 /* Task context ONLY. These enqueue requests; they never write motor outputs.
    TODO TEAM: only the Vehicle Controller should normally call movement APIs. */
@@ -41,6 +41,7 @@ bool motion_turn_right(unsigned steps);
 /* Encoder-bounded 36 RPM maneuver. Set distance for straight travel, or pass
  * zero distance and a direction for a 90 degree pivot. Returns the reply word. */
 bool motion_maneuver(unsigned distance_mm, bool right, uint16_t *command);
+bool motion_maneuver_reverse(unsigned distance_mm, uint16_t *command);
 void motion_stop(void); /* High-priority latch, discards queued commands. */
 bool motion_clear_faults(void); /* Queued explicit reset; no auto-resume. */
 bool motion_get_status(S2_STATUS *out);

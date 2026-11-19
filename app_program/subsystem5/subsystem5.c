@@ -5,14 +5,11 @@
 #include "../vehicle_controller/vehicle_controller.h"
 
 #ifdef CPU_RP2040
-#define COARSE_INDEX_STEP 6u
 #define SERVO_SETTLE_MS 120
 #define SERVO_SWEEP_SETTLE_MS 240
 #define SERVO_HOME_SETTLE_MS 350
-#define OPEN_RECHECK_DELAY_MS 40
 #define PING_INTERVAL_MS 60
 #define RANGE_LOG_INTERVAL_MS 2000u
-#define CENTRE_INDEX ((S5_CENTRE_ANGLE - S5_MIN_ANGLE) / S5_FINE_STEP)
 
 static unsigned servo_angle = S5_CENTRE_ANGLE;
 static const char *const echo_status[] = {"no pulse", "pulse", "stuck high", "timing fault"};
@@ -42,46 +39,58 @@ static unsigned read_at(unsigned index, BOOL verbose)
     S5_PING ping = s5_hw_ping();
     if (verbose) log_ping("[S5 BENCH]", "scan", servo_angle, ping);
     if (ping.range_mm == S5_OPEN_RANGE) {
-        /* A long out-of-range pulse plus this delay spaces triggers by 60 ms. */
-        tk_dly_tsk(OPEN_RECHECK_DELAY_MS);
+        tk_dly_tsk(PING_INTERVAL_MS);
         ping = s5_hw_ping();
         if (verbose) log_ping("[S5 BENCH]", "recheck", servo_angle, ping);
     }
     return ping.range_mm;
 }
 
-static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose)
+static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *request)
 {
     const char *tag = verbose ? "[S5 BENCH]" : "[S5]";
-    unsigned short samples[S5_SCAN_POINTS];
-    tm_printf((UB*)"%s GP12 sweep start 30..150 deg\n", tag);
-    for (unsigned i = 0; i < S5_SCAN_POINTS; i += COARSE_INDEX_STEP)
-        samples[i] = read_at(i, verbose);
-
-    /* Profile the return in the car's path. Nearby objects elsewhere in
-       the coarse sweep still contribute clearance evidence. */
-    unsigned first = CENTRE_INDEX - COARSE_INDEX_STEP;
-    unsigned last = CENTRE_INDEX + COARSE_INDEX_STEP;
-    unsigned coarse = samples[CENTRE_INDEX];
-    if (coarse > S5_CLEAR_MM) {
-        aim(S5_CENTRE_ANGLE);
-        tm_printf((UB*)"%s no target within %u mm at 90 deg (sample=%u; 4094=open, 4095=unavailable)\n",
-                  tag, S5_CLEAR_MM, coarse);
-        return FALSE;
+    S5_SCAN samples = {0};
+    tm_printf((UB*)"%s GP12 coarse sweep 30..150 deg\n", tag);
+    for (unsigned i = 0; i < S5_SCAN_POINTS; i += S5_COARSE_STEP) {
+        if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
+        s5_scan_set(&samples, i, read_at(i, verbose));
     }
-    if (samples[first] <= coarse + S5_PROFILE_TOLERANCE_MM) first = 0;
-    if (samples[last] <= coarse + S5_PROFILE_TOLERANCE_MM) last = S5_SCAN_POINTS - 1;
-    for (unsigned i = first; i <= last; ++i) samples[i] = read_at(i, verbose);
+
+    unsigned anchor = s5_scan_target(&samples);
+    if (anchor == S5_NO_TARGET) {
+        aim(S5_CENTRE_ANGLE);
+        unsigned forward = s5_hw_ping().range_mm;
+        if (request) vehicle_submit_obstacle_range(forward);
+        /* A missing echo on any coarse bearing leaves that sector unresolved. */
+        for (unsigned i = 0; i < S5_SCAN_POINTS; i += S5_COARSE_STEP)
+            if (!s5_range_available(s5_scan_get(&samples, i))) return FALSE;
+        if (!s5_range_available(forward) || forward <= S5_CLEAR_MM) return FALSE;
+        *profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
+        tm_printf((UB*)"%s no obstacle in the coarse sweep\n", tag);
+        return TRUE;
+    }
+
+    unsigned coarse = s5_scan_get(&samples, anchor);
+    unsigned fine = read_at(anchor, verbose);
+    if (!s5_same_obstacle(fine, coarse) || fine > S5_CLEAR_MM) goto cancelled;
+    s5_scan_set(&samples, anchor, fine);
+
+    /* Walk outward at 5-degree resolution until each edge is bracketed. */
+    unsigned first = anchor, last = anchor;
+    while (first > 0 && s5_same_obstacle(s5_scan_get(&samples, first), fine)) {
+        if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
+        unsigned range = read_at(--first, verbose);
+        s5_scan_set(&samples, first, range);
+    }
+    while (last + 1u < S5_SCAN_POINTS && s5_same_obstacle(s5_scan_get(&samples, last), fine)) {
+        if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
+        unsigned range = read_at(++last, verbose);
+        s5_scan_set(&samples, last, range);
+    }
 
     aim(S5_CENTRE_ANGLE);
-    unsigned fine = samples[CENTRE_INDEX];
-    if (fine > S5_CLEAR_MM || fine > coarse + S5_PROFILE_TOLERANCE_MM ||
-        coarse > fine + S5_PROFILE_TOLERANCE_MM) {
-        tm_printf((UB*)"%s centre echo changed during sweep (coarse=%u fine=%u; 4094=open, 4095=unavailable)\n",
-                  tag, coarse, fine);
-        return FALSE;
-    }
-    *profile = s5_profile(samples, first, last, CENTRE_INDEX);
+    if (request) vehicle_submit_obstacle_range(s5_hw_ping().range_mm);
+    *profile = s5_profile(&samples, first, last, anchor);
     if (profile->width_mm == S5_UNKNOWN_WIDTH)
         tm_printf((UB*)"%s width unavailable: nearest=%u mm edges L=%u R=%u (1=resolved)\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->left_edge_valid,
@@ -89,8 +98,12 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose)
     else
         tm_printf((UB*)"%s profile nearest=%u mm width=%u mm angle=%u deg\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
-                  (unsigned)profile->angle_deg);
+                  S5_MIN_ANGLE + profile->angle_offset_deg);
     return TRUE;
+
+cancelled:
+    aim(S5_CENTRE_ANGLE);
+    return FALSE;
 }
 
 static void log_forward(S5_PING ping, const char *context)
@@ -108,7 +121,7 @@ static void log_forward(S5_PING ping, const char *context)
 static void setup(void)
 {
     if (!s5_hw_init())
-        tm_printf((UB*)"[S5] PWM or ultrasonic timer failed to start\n");
+        tm_printf((UB*)"[S5] servo or ultrasonic capture failed to start\n");
     else
         tm_printf((UB*)"[S5] GP%u centred: %u us. Waiting for sensor to settle.\n",
                   S5_SERVO_PIN, S5_SERVO_CENTRE_US);
@@ -125,33 +138,21 @@ static void scan_task(INT stacd, void *exinf)
     tm_printf((UB*)"[S5] GP16 trigger, GP17 echo. Entry=%u mm, clear=%u mm\n",
               S5_STOP_MM, S5_CLEAR_MM);
 
-    BOOL has_profile = FALSE;
     for (;;) {
         S5_PING ping = s5_hw_ping();
-        unsigned range = ping.range_mm;
-        vehicle_submit_obstacle_range(range);
-        if (s5_range_measured(range) && range <= S5_CLEAR_MM && vehicle_obstacle_scan_allowed()) {
-            if (!has_profile) {
-                vehicle_submit_obstacle_profile((S5_PROFILE){
-                    .nearest_mm = range, .width_mm = S5_UNKNOWN_WIDTH,
-                    .left_mm = S5_UNKNOWN_RANGE, .right_mm = S5_UNKNOWN_RANGE,
-                    .angle_deg = S5_CENTRE_ANGLE
-                }, FALSE);
-                has_profile = TRUE;
-            }
-            tk_dly_tsk(PING_INTERVAL_MS);
-            S2_STATUS motion;
-            if (motion_get_status(&motion) && s2_get_bits(&motion, 0, 2) == 0 &&
-                s2_get_bits(&motion, 9, 9) <= 2 && s2_get_bits(&motion, 18, 9) <= 2) {
-                S5_PROFILE profile;
-                has_profile = scan_obstacle(&profile, FALSE);
-                if (has_profile) vehicle_submit_obstacle_profile(profile, TRUE);
-            } else {
-                log_forward(ping, "scan waiting for drive motors to stop");
-            }
-        } else {
-            log_forward(ping, "forward (sweep inactive)");
-            has_profile = FALSE;
+        vehicle_submit_obstacle_range(ping.range_mm);
+        log_forward(ping, "forward");
+        tk_dly_tsk(PING_INTERVAL_MS);
+
+        uint32_t request;
+        S2_STATUS motion;
+        if (vehicle_obstacle_scan_request(&request) && motion_get_status(&motion) &&
+            s2_get_bits(&motion, 0, 2) == 0 && s2_get_bits(&motion, 9, 9) <= 2 &&
+            s2_get_bits(&motion, 18, 9) <= 2) {
+            S5_PROFILE profile;
+            if (scan_obstacle(&profile, FALSE, &request))
+                vehicle_submit_obstacle_profile(profile, request);
+            /* The sweep finishes with a forward ping. */
             tk_dly_tsk(PING_INTERVAL_MS);
         }
     }
@@ -189,7 +190,7 @@ EXPORT void subsystem5_bench(void)
         unsigned detected = bench_wait_for_echo(TRUE);
         tm_printf((UB*)"[S5 BENCH] obstacle detected at %u mm. Starting width test.\n", detected);
         S5_PROFILE profile;
-        (void)scan_obstacle(&profile, TRUE);
+        (void)scan_obstacle(&profile, TRUE, NULL);
         tm_printf((UB*)"[S5 BENCH] Servo centred. Remove target or move it beyond %u mm to rearm.\n",
                   BENCH_RELEASE_MM);
         (void)bench_wait_for_echo(FALSE);
@@ -208,7 +209,7 @@ EXPORT ER subsystem5_start(void)
 {
 #ifdef CPU_RP2040
     vehicle_enable_obstacle_monitor();
-    ID task = app_start_task((FP)scan_task, S5_PRI_MAIN, TP_PRC1, "obstacle_scan");
+    ID task = app_start_task((FP)scan_task, S5_PRI_MAIN, TP_PRC2, "obstacle_scan");
     return task < E_OK ? task : E_OK;
 #else
     return E_OK;

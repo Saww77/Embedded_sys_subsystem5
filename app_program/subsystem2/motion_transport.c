@@ -4,6 +4,8 @@
 
 _Static_assert(S2_QUEUE_LENGTH==8,"Queue index bit widths assume length 8");
 _Static_assert(MAX_DISTANCE_MM < S2_MANEUVER_TURN, "Maneuver distance must fit in 11 bits");
+_Static_assert(S2_MANEUVER_REVERSE_BASE + MAX_DISTANCE_MM < 4096u,
+               "Reverse maneuver must fit the existing 12-bit argument");
 static ID transport_lock;
 /* Native micro T-Kernel task-context mutex with priority inheritance.
  * Never call any transport API from an interrupt. Initialise ONCE at startup. */
@@ -71,13 +73,24 @@ bool motion_move_backward_mm(unsigned n){return n<=MAX_DISTANCE_MM && (n?submit(
 bool motion_turn_left(unsigned n){return n>=1&&n<=8&&submit(S2_LEFT,n-1);}
 bool motion_turn_right(unsigned n){return n>=1&&n<=8&&submit(S2_RIGHT,n-1);}
 bool motion_clear_faults(void){return submit(S2_CLEAR,0);}
-bool motion_maneuver(unsigned distance_mm, bool right, uint16_t *command)
+static bool submit_maneuver(unsigned arg, uint16_t *command)
 {
-    if (!command || distance_mm > MAX_DISTANCE_MM) return false;
-    unsigned arg = distance_mm ? distance_mm : S2_MANEUVER_TURN | (unsigned)right;
-    if (!submit(S2_MANEUVER, arg)) return false;
+    if (!command || !submit(S2_MANEUVER, arg)) return false;
     *command = (uint16_t)(S2_MANEUVER | (arg << 4));
     return true;
+}
+
+bool motion_maneuver(unsigned distance_mm, bool right, uint16_t *command)
+{
+    if (distance_mm > MAX_DISTANCE_MM) return false;
+    unsigned arg = distance_mm ? distance_mm : S2_MANEUVER_TURN | (unsigned)right;
+    return submit_maneuver(arg, command);
+}
+
+bool motion_maneuver_reverse(unsigned distance_mm, uint16_t *command)
+{
+    if (!distance_mm || distance_mm > MAX_DISTANCE_MM) return false;
+    return submit_maneuver(S2_MANEUVER_REVERSE_BASE + distance_mm, command);
 }
 bool motion_get_status(S2_STATUS *out)
 {

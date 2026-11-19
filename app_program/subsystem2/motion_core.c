@@ -197,17 +197,26 @@ bool s2_core_maneuver(unsigned arg)
 {
     if (arg == S2_MANEUVER_TURN || arg == (S2_MANEUVER_TURN | 1u))
         return turn(2u, (arg & 1u) != 0, MANEUVER_RPM);
-    return arg && arg <= MAX_DISTANCE_MM &&
-           start(DISTANCE,false,false,distance_counts(arg,0),distance_counts(arg,1),MANEUVER_RPM);
+    bool reverse = arg > S2_MANEUVER_REVERSE_BASE;
+    unsigned mm = reverse ? arg - S2_MANEUVER_REVERSE_BASE : arg;
+    return mm && mm <= MAX_DISTANCE_MM &&
+           start(DISTANCE,reverse,reverse,distance_counts(mm,0),distance_counts(mm,1),MANEUVER_RPM);
+}
+
+bool s2_core_distance_reached(unsigned mm, const S2_STATUS *status)
+{
+    return s2_get_bits(status,41,13) >= distance_counts(mm,0) &&
+           s2_get_bits(status,54,13) >= distance_counts(mm,1);
 }
 
 bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status)
 {
-    bool pivot = (arg & S2_MANEUVER_TURN) != 0;
-    unsigned left = pivot ? turn_counts(2,0) : distance_counts(arg,0);
-    unsigned right = pivot ? turn_counts(2,1) : distance_counts(arg,1);
-    return s2_get_bits(status,0,2) == IDLE && s2_get_bits(status,5,4) == 0 &&
-           s2_get_bits(status,41,13) >= left && s2_get_bits(status,54,13) >= right;
+    if (s2_get_bits(status,0,2) != IDLE || s2_get_bits(status,5,4)) return false;
+    if (arg == S2_MANEUVER_TURN || arg == S2_MANEUVER_REVERSE_BASE)
+        return s2_get_bits(status,41,13) >= turn_counts(2,0) &&
+               s2_get_bits(status,54,13) >= turn_counts(2,1);
+    unsigned mm = arg > S2_MANEUVER_REVERSE_BASE ? arg - S2_MANEUVER_REVERSE_BASE : arg;
+    return mm && mm <= MAX_DISTANCE_MM && s2_core_distance_reached(mm, status);
 }
 bool s2_core_busy(void) { return state.mode!=IDLE; }
 unsigned s2_core_faults(void) { return state.faults; }

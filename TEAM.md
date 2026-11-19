@@ -111,7 +111,7 @@ the drivers have no locking to stop it.
 | SPI0 | | | |
 | SPI1 | | | |
 | ADC | | | GP26–GP28 |
-| PWM slices 0 B and 6 A | Subsystem 5 | `obstacle_scan` | GP17 (echo capture), GP12 (servo) |
+| GPIO IRQ13, PWM slice 6 A | Subsystem 5 | `obstacle_scan` | GP16 (trigger), GP17 (echo edges), GP12 (servo) |
 | WiFi radio, TCP/IP, MQTT | *kernel* | `cyw43_utk_task` (built in) | GP23–25, GP29 |
 
 ### WiFi and MQTT are special
@@ -150,7 +150,7 @@ change it only by team agreement. Write down every task you create.
 | 2 | 14–15 | *example:* producer_task – 14 – core 1 |
 | 3 | 16–17 | *example:* consumer_task – 16 – core 0 |
 | 4 | 18–19 | *example:* monitor_task – 18 – any |
-| 5 | 20–21 | `obstacle_scan` – 20 – core 0 |
+| 5 | 20–21 | `obstacle_scan` – 20 – core 1 |
 
 Core: `TP_PRC1` = core 0, `TP_PRC2` = core 1, or "any".
 

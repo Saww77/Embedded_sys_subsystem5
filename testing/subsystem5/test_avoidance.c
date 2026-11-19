@@ -123,6 +123,11 @@ static void test_rejoin(bool left, bool retry, bool open_side)
     in.avoidance.line_hit = true;
     in.avoidance.line_at = in.avoidance.now + 20;
     step(&model, &in, &out, 20);
+    assert(model.avoidance.line_samples == 0); /* a marking too early is not the original line */
+    in.avoidance.near_original_line = true;
+    in.avoidance.line_junction = true; /* both outer sensors may cross together */
+    in.avoidance.line_at = in.avoidance.now + 20;
+    step(&model, &in, &out, 20);
     assert(!out.stop);
     step(&model, &in, &out, 20);
     assert(!out.stop); /* the same reading can't confirm the line twice */
@@ -130,6 +135,7 @@ static void test_rejoin(bool left, bool retry, bool open_side)
     step(&model, &in, &out, 20);
     assert(out.stop && out.maneuver.action == S5_STOP && model.avoidance.phase == S5_CENTER_LINE);
 
+    in.avoidance.line_hit = in.avoidance.line_junction = false;
     start_move(&model, &in, &out, S5_ADVANCE, 60);
     end_move(&model, &in, &out);
     start_move(&model, &in, &out, outward, 0);
@@ -139,6 +145,10 @@ static void test_rejoin(bool left, bool retry, bool open_side)
     step(&model, &in, &out, 260);
     assert(model.state == VC_RECOVER_LINE && out.maneuver.action == S5_WAIT);
     in.avoidance.range_valid = true;
+    step(&model, &in, &out, 20);
+    assert(model.state == VC_RECOVER_LINE); /* crossing evidence cannot authorize handoff */
+    in.avoidance.line_centered = true;
+    in.avoidance.line_at = in.avoidance.now + 20;
     step(&model, &in, &out, 20);
     assert(model.state == VC_FOLLOW_LINE && model.avoidance.phase == S5_COMPLETE);
     step(&model, &in, &out, 20);
@@ -203,6 +213,38 @@ static void test_reentry_limit(void)
     assert(out.action == S5_STOP && model.phase == S5_FAILED);
 }
 
+static void test_reverse_and_rescan(bool path_clears)
+{
+    VC_MODEL model = {0};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    in.avoidance.line_centered = in.avoidance.can_retrace = true;
+    S5_PROFILE blocked = {.nearest_mm = 90};
+    profile(&model, &in, &out, blocked);
+    assert(model.avoidance.phase == S5_BACK_UP);
+    start_move(&model, &in, &out, S5_REVERSE, S5_REVERSE_MM);
+    end_move(&model, &in, &out);
+    assert(model.avoidance.phase == S5_PROFILE_PATH);
+    step(&model, &in, &out, 20);
+    assert(model.avoidance.phase == S5_PROFILE_PATH); /* previous scan can't be reused */
+
+    if (path_clears) {
+        in.avoidance.profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
+        in.avoidance.range_mm = 300;
+        in.obstacle_detected = in.obstacle_blocked = false;
+    }
+    in.avoidance.profile_at = in.avoidance.now + 2000;
+    step(&model, &in, &out, 2000);
+    if (!path_clears) {
+        assert(out.stop && model.avoidance.phase == S5_FAILED);
+        return;
+    }
+    assert(model.avoidance.phase == S5_CHECK_LINE);
+    in.avoidance.line_at = in.avoidance.now + 260;
+    step(&model, &in, &out, 260);
+    assert(model.state == VC_FOLLOW_LINE && model.avoidance.phase == S5_COMPLETE);
+}
+
 int main(void)
 {
     test_rejoin(true, false, false);
@@ -212,5 +254,7 @@ int main(void)
     test_abort_paths();
     test_unsafe_profile_and_scan_timeout();
     test_reentry_limit();
+    test_reverse_and_rescan(true);
+    test_reverse_and_rescan(false);
     puts("PASS obstacle avoidance, both sides, blocked return retry, recovery, and cancellation");
 }

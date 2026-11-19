@@ -1,9 +1,10 @@
 /* RP2040 BSP adapter. No Pico SDK runtime, GPIO callbacks or hardware spinlocks.
  * Owner task and encoder interrupts MUST run on physical core 1 (TP_PRC2).
  * Register addresses come from RP2040 IO_BANK0/PWM/TIMER; other subsystems own
- * other peripheral registers. Default IRQ13 registration is for this isolated image. */
+ * other peripheral registers. IRQ13 dispatches both encoder and ultrasonic edges. */
 #include "motion_hw.h"
 #include "motion_config.h"
+#include "../subsystem5/drv_ultrasonic.h"
 #define REG32(addr) (*(volatile uint32_t *)(uintptr_t)(addr))
 #define S2_IO_INTR0 (IO_BANK0_BASE+0xf0u)
 #define S2_PROC0_INTE0 (IO_BANK0_BASE+0x100u)
@@ -64,7 +65,29 @@ void s2_encoder_dispatch(void)
     if(pending&(8u<<(RIGHT_ENC_A*4u)))subsystem2_encoder_gpio_irq(RIGHT_ENC_A,S2_GPIO_EDGE_RISE);
 }
 #if S2_OWNS_GPIO_CALLBACK
-static void io_bank0_handler(UINT intno) {(void)intno;s2_encoder_dispatch();}
+static void io_bank0_handler(UINT intno)
+{
+    (void)intno;
+#if !APP_BUDDY1_DEMO
+    s5_hw_echo_irq();
+#endif
+#if !APP_S5_BENCH
+    s2_encoder_dispatch();
+#endif
+}
+
+ER app_gpio_irq_init(void)
+{
+    T_DINT d = {0};
+    d.intatr = TA_HLNG;
+    d.inthdr = (FP)io_bank0_handler;
+    ER er = tk_def_int(S2_IO_IRQ, &d);
+    if (er < E_OK) return er;
+    REG32(0xe000e40cu) = (REG32(0xe000e40cu) & ~0x0000ff00u) | 0x0000c000u;
+    REG32(0xe000e280u) = 1u << S2_IO_IRQ;
+    REG32(0xe000e100u) = 1u << S2_IO_IRQ;
+    return E_OK;
+}
 #endif
 ER s2_hw_encoder_init(void)
 {
@@ -79,19 +102,11 @@ ER s2_hw_encoder_init(void)
     /* Disable these edges on core 0. Only core 1 may touch the compact counter. */
     REG32(S2_PROC0_INTE0)&=~S2_EDGE_MASK;
     REG32(S2_PROC1_INTE0)&=~S2_EDGE_MASK;
-#if S2_OWNS_GPIO_CALLBACK
-    /* TODO TEAM: set S2_OWNS_GPIO_CALLBACK=0 and install a shared dispatcher instead.
-       Do NOT register another IRQ13 handler which replaces this one. */
-    T_DINT d={0};d.intatr=TA_HLNG;d.inthdr=(FP)io_bank0_handler;
-    ER er=tk_def_int(S2_IO_IRQ,&d);if(er<E_OK)return er;
-#endif
     REG32(S2_IO_INTR0)=S2_EDGE_MASK;
-    REG32(S2_PROC1_INTE0)|=S2_EDGE_MASK;
 #if S2_OWNS_GPIO_CALLBACK
-    /* RP2040 IO_IRQ_BANK0 is IRQ13, vector29. Set lowest hardware priority. */
-    REG32(0xe000e40cu)=(REG32(0xe000e40cu)&~0x0000ff00u)|0x0000c000u;
-    REG32(0xe000e280u)=1u<<S2_IO_IRQ;
-    REG32(0xe000e100u)=1u<<S2_IO_IRQ;
+    ER er = app_gpio_irq_init();
+    if (er < E_OK) return er;
 #endif
+    REG32(S2_PROC1_INTE0)|=S2_EDGE_MASK;
     return E_OK;
 }

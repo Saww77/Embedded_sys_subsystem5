@@ -7,19 +7,19 @@
 EXPORT void subsystem5_test(void)
 {
     TEST_INIT();
-    unsigned short samples[S5_SCAN_POINTS];
-    for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) samples[i] = S5_UNKNOWN_RANGE;
-    samples[10] = 410;
-    samples[11] = 150;
-    samples[12] = 140;
-    samples[13] = 150;
-    samples[14] = S5_OPEN_RANGE;
-    S5_PROFILE profile = s5_profile(samples, 7, 17, 12);
-    TEST_CHECK("S5-U01", profile.nearest_mm == 140 && profile.angle_deg == 90 &&
+    S5_SCAN samples = {0};
+    for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&samples, i, S5_UNKNOWN_RANGE);
+    s5_scan_set(&samples, 10, 410);
+    s5_scan_set(&samples, 11, 150);
+    s5_scan_set(&samples, 12, 140);
+    s5_scan_set(&samples, 13, 150);
+    s5_scan_set(&samples, 14, S5_OPEN_RANGE);
+    S5_PROFILE profile = s5_profile(&samples, 7, 17, 12);
+    TEST_CHECK("S5-U01", profile.nearest_mm == 140 && profile.angle_offset_deg == 60 &&
                profile.width_mm == 26 && profile.left_mm == 410 &&
                profile.right_mm == S5_OPEN_RANGE && profile.right_edge_valid,
                "profile distinguishes an open side from an electrical fault");
-    profile = s5_profile(samples, 12, 17, 12);
+    profile = s5_profile(&samples, 12, 17, 12);
     TEST_CHECK("S5-U02", profile.width_mm == S5_UNKNOWN_WIDTH,
                "a clipped scan does not claim an obstacle width");
     unsigned char packet[7];
@@ -28,37 +28,32 @@ EXPORT void subsystem5_test(void)
                !s1_wire_obstacle(packet, 140, 0, 0, 0, 151),
                "packed scan carries angle and rejects out-of-range values");
     S5_RANGE_GATE gate = {.range_mm = S5_UNKNOWN_RANGE, .blocked = true};
-    unsigned open = s5_range_from_echo(0);
-    TEST_CHECK("S5-U04", open == S5_OPEN_RANGE && s5_range_from_echo(38000) == open &&
+    unsigned open = s5_range_from_echo(25000);
+    TEST_CHECK("S5-U04", open == S5_OPEN_RANGE && s5_range_from_echo(0) == S5_UNKNOWN_RANGE &&
                s5_range_from_echo(875) == 150 && !s5_accept_range(&gate, open) &&
                gate.blocked && s5_accept_range(&gate, open) && !gate.blocked,
-               "two ordinary no-target pings clear the startup interlock");
+               "two complete out-of-range pulses clear the startup interlock");
     TEST_CHECK("S5-U05", s5_accept_range(&gate, 100) && gate.blocked &&
                !s5_accept_range(&gate, open) && gate.range_mm == 100 &&
                s5_accept_range(&gate, S5_UNKNOWN_RANGE) && gate.blocked &&
                !s5_accept_range(&gate, open) && gate.blocked,
                "one open return cannot clear a close obstacle or a fault");
-    for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) samples[i] = 140;
-    profile = s5_profile(samples, 0, S5_SCAN_POINTS - 1, 12);
+    for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&samples, i, 140);
+    profile = s5_profile(&samples, 0, S5_SCAN_POINTS - 1, 12);
     TEST_CHECK("S5-U06", !profile.left_edge_valid && !profile.right_edge_valid,
                "identical near readings at every angle give no confirmed exit side");
-    bool seen_echo = false;
-    S5_PING quiet = s5_classify_echo(S5_ECHO_QUIET, 0, &seen_echo);
-    TEST_CHECK("S5-U07", quiet.range_mm == S5_UNKNOWN_RANGE && !seen_echo &&
-               s5_classify_echo(S5_ECHO_PULSE, 2, &seen_echo).range_mm == S5_UNKNOWN_RANGE &&
-               s5_classify_echo(S5_ECHO_QUIET, 0, &seen_echo).range_mm == S5_UNKNOWN_RANGE,
-               "silence and implausibly short pulses cannot qualify as open on startup");
-    S5_PING target = s5_classify_echo(S5_ECHO_PULSE, 2300, &seen_echo);
-    quiet = s5_classify_echo(S5_ECHO_QUIET, 0, &seen_echo);
+    TEST_CHECK("S5-U07", s5_classify_echo(S5_ECHO_QUIET, 0).range_mm == S5_UNKNOWN_RANGE &&
+               s5_classify_echo(S5_ECHO_PULSE, 2).range_mm == S5_UNKNOWN_RANGE &&
+               s5_classify_echo(S5_ECHO_HIGH, 0).range_mm == S5_UNKNOWN_RANGE,
+               "silence, short pulses and stuck-high echo leave range unknown");
+    S5_PING target = s5_classify_echo(S5_ECHO_PULSE, 2300);
     TEST_CHECK("S5-U08", target.range_mm == 394 && target.pulse_us == 2300 &&
-               seen_echo && quiet.range_mm == S5_OPEN_RANGE &&
-               s5_classify_echo(S5_ECHO_HIGH, 0, &seen_echo).range_mm == S5_UNKNOWN_RANGE &&
-               s5_classify_echo(S5_ECHO_TIMING, 0, &seen_echo).range_mm == S5_UNKNOWN_RANGE,
-               "a valid pulse qualifies an idle-low timeout but never a stuck-high or timing fault");
-    seen_echo = false;
-    S5_PING long_pulse = s5_classify_echo(S5_ECHO_PULSE, 38000, &seen_echo);
-    TEST_CHECK("S5-U09", seen_echo && long_pulse.range_mm == S5_OPEN_RANGE,
-               "a complete out-of-range pulse qualifies the sensor on an open track");
+               s5_classify_echo(S5_ECHO_QUIET, 0).range_mm == S5_UNKNOWN_RANGE &&
+               s5_classify_echo(S5_ECHO_TIMING, 0).range_mm == S5_UNKNOWN_RANGE,
+               "a valid pulse does not make a subsequent missing echo available");
+    TEST_CHECK("S5-U09", s5_classify_echo(S5_ECHO_PULSE, 25000).range_mm == S5_OPEN_RANGE &&
+               s5_classify_echo(S5_ECHO_PULSE, 30000).range_mm == S5_UNKNOWN_RANGE,
+               "an out-of-range pulse must finish before the 30 ms deadline");
     TEST_SUMMARY("subsystem5");
 }
 #endif

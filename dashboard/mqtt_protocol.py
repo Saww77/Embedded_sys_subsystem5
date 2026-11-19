@@ -12,7 +12,7 @@ AVOIDANCE_PHASES = (
     'Aligning alongside the obstacle', 'Passing obstacle', 'Turning toward the line',
     'Searching for the line', 'Centering on the line', 'Realigning with the track',
     'Continuing past the obstacle', 'Line reacquired', 'Detour stopped',
-    'Checking the rejoined path',
+    'Checking the rejoined path', 'Reversing to rescan',
 )
 AVOIDANCE_SIDES = (None, 'Left', 'Right')
 AVOIDANCE_FAILED = 12

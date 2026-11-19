@@ -23,7 +23,7 @@ void vc_core_step(VC_MODEL *m, const VC_INPUT *in, VC_OUTPUT *out)
     bool linked = !in->link_required || in->link_ok;
     if (!m->running && in->start && in->ready && fresh && !in->line_stop &&
         linked && !in->obstacle_blocked &&
-        (m->avoidance.phase != S5_FAILED || in->avoidance.line_hit)) {
+        (m->avoidance.phase != S5_FAILED || (in->avoidance.line_hit && !in->avoidance.line_junction))) {
         m->running = true;
         m->avoidance = (S5_AVOID){0};
     }
@@ -37,6 +37,7 @@ void vc_core_step(VC_MODEL *m, const VC_INPUT *in, VC_OUTPUT *out)
     if (!detouring(m) && in->obstacle_blocked) {
         if (!in->obstacle_detected) { halt(m, VC_IDLE, VC_REASON_OBSTACLE); return; }
         s5_avoid_begin(&m->avoidance, in->avoidance.now);
+        m->avoidance.reverse_available = in->avoidance.can_retrace;
         m->state = VC_AVOIDING;
         m->reason = VC_REASON_OBSTACLE;
         return; /* Stop the line-follow velocity before starting the scan. */

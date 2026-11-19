@@ -5,7 +5,6 @@
 #define FOLLOW_AHEAD_MARGIN_MM 90u
 #define MAX_PASS_MM 300u
 #define RETRY_STEP_MM 60u
-#define SEARCH_MARGIN_MM 40u
 #define MOTION_SETTLE_MS 260u
 #define SCAN_TIMEOUT_MS 11000u
 #define PHASE_TIMEOUT_MS 6500u
@@ -72,21 +71,38 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         elapsed >= (phase == S5_PROFILE_PATH ? SCAN_TIMEOUT_MS : PHASE_TIMEOUT_MS))
         return fail(state, in->now);
 
+    bool range_fresh = in->range_valid && in->now - in->range_at <= S5_RANGE_MAX_AGE_MS;
     if (phase == S5_PROFILE_PATH) {
         /* The scan belongs to this stop and has completed with the servo centred. */
-        if (!in->profile_valid || (in->profile_at - state->phase_at) == 0 ||
-            !at_or_after(in->profile_at, state->phase_at)) return wait;
-        if (!choose_side(state, &in->profile)) return fail(state, in->now);
-        return go(state, S5_TURN_OUT, in->now);
+        if (!in->profile_valid || in->profile_at == state->phase_at ||
+            !at_or_after(in->profile_at, state->phase_at) || !in->stopped ||
+            !range_fresh) return wait;
+        if (in->profile.nearest_mm == S5_OPEN_RANGE)
+            return go(state, S5_CHECK_LINE, in->now);
+        if (choose_side(state, &in->profile)) return go(state, S5_TURN_OUT, in->now);
+        if (state->reverse_available && in->line_centered && !in->line_junction) {
+            state->reverse_available = false;
+            return go(state, S5_BACK_UP, in->now);
+        }
+        return fail(state, in->now);
+    }
+
+    if (phase == S5_BACK_UP) {
+        if (in->line_junction || !in->line_centered || !range_fresh) return fail(state, in->now);
+        if (in->motion == S5_MOTION_DONE) return go(state, S5_PROFILE_PATH, in->now);
+        if (in->motion != S5_MOTION_NONE || !in->stopped || elapsed < MOTION_SETTLE_MS ||
+            !at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS)) return wait;
+        return (S5_AVOID_OUTPUT){.action = S5_REVERSE, .distance_mm = S5_REVERSE_MM};
     }
 
     bool forward = phase == S5_SHIFT_OUT || phase == S5_PASS ||
                    phase == S5_FIND_LINE || phase == S5_CENTER_LINE;
-    bool range_fresh = in->range_valid && in->now - in->range_at <= S5_RANGE_MAX_AGE_MS;
     if (phase == S5_CHECK_LINE) {
         if (!in->stopped || !range_fresh || elapsed < MOTION_SETTLE_MS ||
             !at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS)) return wait;
         if (in->range_mm <= S5_CLEAR_MM || in->line_junction) return fail(state, in->now);
+        if (!in->line_centered || !at_or_after(in->line_at, state->phase_at + MOTION_SETTLE_MS))
+            return wait;
         return go(state, S5_COMPLETE, in->now);
     }
     if (forward && (in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING) &&
@@ -94,8 +110,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         return fail(state, in->now);
 
     if (phase == S5_FIND_LINE && (in->motion == S5_MOTION_PENDING || in->motion == S5_MOTION_DONE)) {
-        if (in->line_junction) return fail(state, in->now);
-        if (at_or_after(in->line_at, state->phase_at) && in->line_at != state->last_line_at) {
+        if (in->near_original_line && at_or_after(in->line_at, state->phase_at) && in->line_at != state->last_line_at) {
             state->last_line_at = in->line_at;
             state->line_samples = in->line_hit ? state->line_samples + 1u : 0u;
         }
@@ -133,7 +148,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
     unsigned distance = phase == S5_SHIFT_OUT ? state->offset_mm :
                         phase == S5_PASS ? state->next_pass_mm :
                         phase == S5_CENTER_LINE ? in->sensor_to_axle_mm :
-                        state->offset_mm + SEARCH_MARGIN_MM;
+                        state->offset_mm + S5_SEARCH_MARGIN_MM;
     if (in->range_mm < distance + S5_STOP_MM) {
         if (phase != S5_FIND_LINE || state->passed_mm == MAX_PASS_MM)
             return fail(state, in->now);

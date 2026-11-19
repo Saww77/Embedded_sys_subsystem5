@@ -136,7 +136,7 @@ subfolders, is compiled automatically.
 - **One folder per student:** `app_program/subsystem1/` … `subsystem5/`.
   Subsystems 1–4 hold a working example, one task each (LED, producer,
   consumer, monitor). Together they use the main micro T-Kernel APIs and
-  pass data between subsystems. Subsystem 5 is an empty template.
+  pass data between subsystems. Subsystem 5 provides adaptive obstacle scanning and line recovery.
   Replace the examples with your own subsystems.
 - `subsystemN.h` is that subsystem's public interface: the object IDs and
   data formats the other subsystems may use.

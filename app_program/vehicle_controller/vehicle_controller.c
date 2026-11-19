@@ -12,6 +12,9 @@
 #endif
 #endif
 #define VC_REFRESH_MS 100u
+#define VC_RETRACE_MIN_MS 600u
+
+_Static_assert(S3_ADVANCE_MM > 0 && S3_ADVANCE_MM < 512u, "Axle offset must fit in 9 bits");
 static ID guard;
 static VEHICLE_SNAPSHOT data;
 static VC_MODEL model;
@@ -131,45 +134,57 @@ void vehicle_submit_obstacle_range(unsigned range)
     if (s5_accept_range(&obstacle_range, range)) {
         obstacle_range_at = now_ms();
         if (obstacle_range.blocked) start_pending = FALSE;
-        if (!detouring() && !obstacle_range.blocked) {
+        if (!detouring()) {
             data.obstacle_valid = s5_range_measured(range);
             data.obstacle_profile = false;
             if (data.obstacle_valid) {
                 data.near_mm = range;
                 data.width_mm = S5_UNKNOWN_WIDTH;
                 data.clear_left_mm = data.clear_right_mm = S5_UNKNOWN_RANGE;
-                data.obstacle_angle = S5_CENTRE_ANGLE;
+                data.obstacle_angle_offset = S5_CENTRE_ANGLE - S5_MIN_ANGLE;
                 data.obstacle_timestamp_ms = obstacle_range_at;
             }
-        } else if (!detouring() && !s5_range_available(range)) {
-            data.obstacle_valid = FALSE;
         }
     }
     unlock();
 }
 
-BOOL vehicle_obstacle_scan_allowed(void)
+static BOOL scan_pending(void)
+{
+    return model.avoidance.phase == S5_PROFILE_PATH && !full_profile_valid &&
+           !stop_pending;
+}
+
+BOOL vehicle_obstacle_scan_request(uint32_t *request)
 {
     if (!lock()) return FALSE;
-    BOOL allowed = obstacle_range.blocked && (model.state == VC_IDLE || model.state == VC_FAULT ||
-                                           (model.avoidance.phase == S5_PROFILE_PATH && !full_profile_valid));
+    BOOL allowed = scan_pending();
+    if (allowed) *request = model.avoidance.phase_at;
     unlock();
     return allowed;
 }
 
-void vehicle_submit_obstacle_profile(S5_PROFILE profile, BOOL complete)
+BOOL vehicle_obstacle_scan_current(uint32_t request)
+{
+    if (!lock()) return FALSE;
+    BOOL current = scan_pending() && model.avoidance.phase_at == request;
+    unlock();
+    return current;
+}
+
+void vehicle_submit_obstacle_profile(S5_PROFILE profile, uint32_t request)
 {
     if (!lock()) return;
-    uint32_t now = now_ms();
-    data.near_mm = profile.nearest_mm;
-    data.width_mm = profile.width_mm;
-    data.clear_left_mm = s5_range_measured(profile.left_mm) ? profile.left_mm : S5_UNKNOWN_RANGE;
-    data.clear_right_mm = s5_range_measured(profile.right_mm) ? profile.right_mm : S5_UNKNOWN_RANGE;
-    data.obstacle_angle = profile.angle_deg;
-    data.obstacle_timestamp_ms = now;
-    data.obstacle_valid = TRUE;
-    data.obstacle_profile = true;
-    if (complete && model.avoidance.phase == S5_PROFILE_PATH) {
+    if (scan_pending() && model.avoidance.phase_at == request) {
+        uint32_t now = now_ms();
+        data.obstacle_valid = s5_range_measured(profile.nearest_mm);
+        data.obstacle_profile = data.obstacle_valid;
+        data.near_mm = profile.nearest_mm;
+        data.width_mm = profile.width_mm;
+        data.clear_left_mm = s5_range_measured(profile.left_mm) ? profile.left_mm : S5_UNKNOWN_RANGE;
+        data.clear_right_mm = s5_range_measured(profile.right_mm) ? profile.right_mm : S5_UNKNOWN_RANGE;
+        data.obstacle_angle_offset = profile.angle_offset_deg;
+        data.obstacle_timestamp_ms = now;
         full_profile = profile;
         full_profile_at = now;
         full_profile_valid = TRUE;
@@ -214,6 +229,8 @@ static uint32_t refreshed;
 static uint16_t maneuver_command;
 static uint32_t maneuver_reply_at_submit;
 static bool maneuver_failed;
+static bool tracking_straight;
+static uint32_t straight_since;
 static S5_MOTION maneuver_result(void)
 {
     if (maneuver_failed) return S5_MOTION_FAILED;
@@ -263,6 +280,30 @@ static void vehicle_service_once(void)
         .stopped = s2_get_bits(&status, 0, 2) == 0 &&
                    s2_get_bits(&status, 9, 9) <= 2 && s2_get_bits(&status, 18, 9) <= 2,
     };
+    /* Both outside sensors can see the original line together during the inward
+       crossing. On the track heading both dark still indicates a junction. */
+    in.avoidance.line_hit = in.avoidance.line_hit || in.avoidance.line_junction;
+#if S3_IR_MASK & 0x2
+    in.avoidance.line_centered = data.c >= LINE_DARK && !in.avoidance.line_junction;
+#else
+    in.avoidance.line_centered = !in.avoidance.line_hit;
+#endif
+    if (model.avoidance.phase == S5_FIND_LINE &&
+        (motion == S5_MOTION_PENDING || motion == S5_MOTION_DONE)) {
+        unsigned cross_margin = S3_ADVANCE_MM + S5_SEARCH_MARGIN_MM;
+        unsigned min_cross_mm = model.avoidance.offset_mm > cross_margin ?
+                                model.avoidance.offset_mm - cross_margin : 0;
+        in.avoidance.near_original_line = s2_core_distance_reached(min_cross_mm, &status);
+    }
+    unsigned left_measured = s2_get_bits(&status, 9, 9);
+    unsigned right_measured = s2_get_bits(&status, 18, 9);
+    bool straight = model.state == VC_FOLLOW_LINE && in.avoidance.line_centered &&
+                    in.left_rpm == in.right_rpm && left_measured >= 20 && right_measured >= 20 &&
+                    left_measured <= right_measured + 3 && right_measured <= left_measured + 3 &&
+                    in.line_valid && in.line_age_ms <= VC_LINE_MAX_AGE_MS;
+    if (straight && !tracking_straight) straight_since = now;
+    tracking_straight = straight;
+    in.avoidance.can_retrace = straight && now - straight_since >= VC_RETRACE_MIN_MS;
     in.stop = stop_pending;
     in.start = start_pending;
     if (auto_pending && ready && !in.obstacle_blocked &&
@@ -305,8 +346,10 @@ static void vehicle_service_once(void)
         if (out.maneuver.action != S5_WAIT) {
             S2_REPLY reply;
             maneuver_failed = !motion_get_reply(&reply) ||
-                !motion_maneuver(out.maneuver.distance_mm, out.maneuver.action == S5_PIVOT_RIGHT,
-                                 &maneuver_command);
+                !(out.maneuver.action == S5_REVERSE ?
+                    motion_maneuver_reverse(out.maneuver.distance_mm, &maneuver_command) :
+                    motion_maneuver(out.maneuver.distance_mm, out.maneuver.action == S5_PIVOT_RIGHT,
+                                    &maneuver_command));
             if (!maneuver_failed) maneuver_reply_at_submit = reply.sequence;
         }
     } else if (out.left_rpm != last_l || out.right_rpm != last_r || now - refreshed >= VC_REFRESH_MS) {
