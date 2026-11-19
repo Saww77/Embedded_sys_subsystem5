@@ -100,14 +100,25 @@ static unsigned scan_edge(S5_SCAN *samples, unsigned anchor, unsigned reference,
         index += step;
         unsigned range = read_at((unsigned)index, verbose, true);
         s5_scan_set(samples, (unsigned)index, range);
+        const char *side = step < 0 ? "left" : "right";
         if (!s5_range_available(range)) {
             ++misses;
+            if (verbose)
+                tm_printf((UB*)"[S5 BENCH] %s angle=%u deg: echo unconfirmed\n", side, servo_angle);
         } else if (!s5_same_obstacle(range, reference)) {
-            break;
+            if (verbose)
+                tm_printf((UB*)"[S5 BENCH] %s edge confirmed at angle=%u deg\n", side, servo_angle);
+            return (unsigned)index;
         } else {
             misses = 0;
+            if (verbose)
+                tm_printf((UB*)"[S5 BENCH] %s angle=%u deg: %u mm grouped with %u mm target\n",
+                          side, servo_angle, range, reference);
         }
     }
+    if (verbose)
+        tm_printf((UB*)"[S5 BENCH] %s sweep limit at %u deg: no confirmed edge\n",
+                  step < 0 ? "left" : "right", servo_angle);
     return (unsigned)index;
 }
 
