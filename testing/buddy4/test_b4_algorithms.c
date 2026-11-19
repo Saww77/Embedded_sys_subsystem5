@@ -19,13 +19,7 @@
 #include "../../app_program/subsystem4/b4_safety_dispatch.h"
 
 static int test_failures;
-static uint8_t motion_stop_calls;
 static uint8_t vehicle_stop_calls;
-
-static void mock_motion_stop(void)
-{
-	motion_stop_calls++;
-}
 
 static void mock_vehicle_stop(void)
 {
@@ -748,25 +742,20 @@ static void test_safety_stop_dispatch(void)
 {
 	B4_SAFETY_DISPATCH_STATUS status;
 
-	motion_stop_calls = 0U;
 	vehicle_stop_calls = 0U;
-	status = b4_safety_dispatch_stop(0U, mock_motion_stop,
-					mock_vehicle_stop);
+	status = b4_safety_dispatch_stop(0U, mock_vehicle_stop);
 	CHECK(status == B4_SAFETY_DISPATCH_NOT_REQUESTED);
-	CHECK(motion_stop_calls == 0U);
 	CHECK(vehicle_stop_calls == 0U);
 
 	status = b4_safety_dispatch_stop(
 		B4_PROCESSOR_FLAG_STOP_REQUESTED,
-		mock_motion_stop, mock_vehicle_stop);
+		mock_vehicle_stop);
 	CHECK(status == B4_SAFETY_DISPATCH_DISPATCHED);
-	CHECK(motion_stop_calls == 1U);
 	CHECK(vehicle_stop_calls == 1U);
 	CHECK(b4_safety_dispatch_stop(
 		      B4_PROCESSOR_FLAG_STOP_REQUESTED,
-		      0, mock_vehicle_stop) ==
+		      0) ==
 	      B4_SAFETY_DISPATCH_INVALID_ARGUMENT);
-	CHECK(motion_stop_calls == 1U);
 	CHECK(vehicle_stop_calls == 1U);
 }
 

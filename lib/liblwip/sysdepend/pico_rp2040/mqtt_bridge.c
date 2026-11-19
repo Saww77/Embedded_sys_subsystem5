@@ -1,6 +1,9 @@
 /* Kernel-facing half: kept apart from lwIP to avoid SDK/T-Kernel size_t clash. */
 #include <tk/tkernel.h>
 #include "mqtt_bridge.h"
+#if !APP_BUDDY1_DEMO
+#include "../../../../app_program/vehicle_controller/vehicle_controller.h"
+#endif
 
 static ID tx_buffer;
 static ID rx_buffer;
@@ -54,11 +57,11 @@ int mqtt_bridge_send(unsigned route, const unsigned char *data, unsigned length)
     return send_frame(tx_buffer, route, data, length);
 }
 
-int mqtt_bridge_receive(unsigned char frame[MQTT_BRIDGE_FRAME_MAX])
+int mqtt_bridge_receive(unsigned char frame[MQTT_BRIDGE_FRAME_MAX], int timeout_ms)
 {
     if (!mqtt_bridge_ready()) { return E_OBJ; }
     if (frame == 0) { return E_PAR; }
-    return tk_rcv_mbf(rx_buffer, frame, TMO_POL);
+    return tk_rcv_mbf(rx_buffer, frame, timeout_ms);
 }
 
 int mqtt_bridge_service_take(unsigned char frame[MQTT_BRIDGE_FRAME_MAX])
@@ -77,7 +80,13 @@ int mqtt_bridge_service_deliver(unsigned route, const unsigned char *data, unsig
 
 void mqtt_bridge_service_status(unsigned flags)
 {
+#if !APP_BUDDY1_DEMO
+    unsigned previous = mqtt_bridge_status();
+#endif
     __atomic_store_n(&link_flags, flags & 31u, __ATOMIC_RELEASE);
+#if !APP_BUDDY1_DEMO
+    if ((previous ^ flags) & 7u) vehicle_notify_feedback();
+#endif
 }
 
 unsigned mqtt_bridge_status(void)

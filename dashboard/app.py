@@ -208,9 +208,9 @@ class Dashboard:
                 current["data"] = dict(
                     current["data"],
                     start_block_label="Ultrasonic echo unavailable",
-                    start_hint="With the car stopped, hold a flat target 30–50 cm straight ahead. "
-                               "If the fault persists, check sensor power, ground, GP16 trigger "
-                               "and the 3.3 V signal at GP17 echo.",
+                    start_hint="With the car stopped, hold a flat target 40–50 cm straight ahead. "
+                               "If the fault persists, check the [S5] forward log on USB serial, "
+                               "sensor power, common ground, GP16 trigger and the 3.3 V echo on GP17.",
                 )
             avoidance = telemetry["avoidance"]
             if (obstacle_interlock and not echo_fault and avoidance["fresh"] and
@@ -250,6 +250,10 @@ class Dashboard:
             if self.client is None or not state["broker_connected"]:
                 raise CommandUnavailable("Broker is disconnected. No command was queued.")
             if command == "start" and not state["start_allowed"]:
+                controller = state["telemetry"]["controller"]
+                if controller["fresh"] and controller["data"]["start_block"]:
+                    diagnostics = controller["data"]
+                    raise CommandUnavailable(f"{diagnostics['start_block_label']}. {diagnostics['start_hint']}")
                 raise CommandUnavailable("Wait for a live Pico heartbeat with all connection flags ready.")
             if command == "reset" and not state["reset_allowed"]:
                 raise CommandUnavailable("Reset requires fresh stopped-motor diagnostics and a latched motor fault.")

@@ -66,15 +66,12 @@
 // Barcode
 #define BC_ELEMENTS      29
 #define S3_ADVANCE_MM    60     /* centre of wheels onto the junction: MEASURE sensor-to-axle distance */
-#define S3_TURN_90       2      /* Buddy 2: steps of 45 degrees, so 2 = 90, 4 = 180 */
 
 
 IMPORT void barcode_reset(void);
 IMPORT void barcode_feed(INT dark);
 IMPORT char barcode_take(void);
 IMPORT BOOL barcode_busy(void);
-IMPORT BOOL s3_motion_move_mm(INT mm);
-IMPORT BOOL s3_motion_turn(INT dir, INT steps);   /* dir < 0 = left, > 0 = right */
 
 
 /* Steering memory between calls of line_decide():
@@ -94,10 +91,8 @@ IMPORT void line_decide(INT l, INT c, INT r, LF_STATE *st, LF_CMD *cmd);
 IMPORT void line_follow_task(INT stacd, void *exinf);
 
 
-/* Motion Control calls go through motion_adapter.c (prints now, real later) */
-IMPORT void s3_motion_stop(void);
+/* Read-only Buddy 2 diagnostics. The controller owns motion commands. */
 IMPORT void s3_motion_diagnostics(void);
-IMPORT BOOL s3_motion_set_wheel_rpm(INT left, INT right);
 
 
 /* IF-01: send SAMPLE_MSG (subsystem2.h) here with tk_snd_mbx */

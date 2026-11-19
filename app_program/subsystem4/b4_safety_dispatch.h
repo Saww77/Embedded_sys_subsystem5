@@ -1,6 +1,6 @@
 /*
  * b4_safety_dispatch.h
- * Testable bridge from Buddy 4 safety flags to motor-stop callbacks.
+ * Testable bridge from Buddy 4 safety flags to the vehicle controller.
  */
 
 #ifndef B4_SAFETY_DISPATCH_H
@@ -20,7 +20,6 @@ typedef enum {
 
 B4_SAFETY_DISPATCH_STATUS b4_safety_dispatch_stop(
 	uint8_t safety_flags,
-	B4_STOP_CALLBACK motion_stop_callback,
 	B4_STOP_CALLBACK vehicle_stop_callback);
 
 #endif /* B4_SAFETY_DISPATCH_H */

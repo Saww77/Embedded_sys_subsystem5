@@ -76,7 +76,7 @@ void s1_publish_telemetry(void)
     }
     VEHICLE_SNAPSHOT s;
     if(link!=3u || !vehicle_get_snapshot(&s))return;
-    unsigned faults=s.motor_faults?S1_FAULT_MOTOR:0;
+    unsigned faults=(s.motor_faults || s.reason==VC_REASON_MOTOR)?S1_FAULT_MOTOR:0;
     if(s.motor_faults&1u)faults|=S1_FAULT_ENCODER;
     if(s.obstacle_no_echo)faults|=S1_FAULT_NO_ECHO;
     if(s.reason==VC_REASON_LINK)faults|=S1_FAULT_WIFI;

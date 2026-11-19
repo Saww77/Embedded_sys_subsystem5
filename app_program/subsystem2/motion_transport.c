@@ -62,11 +62,26 @@ bool motion_decrease_speed(void){return submit(S2_DEC,0);}
 bool motion_forward(void){return submit(S2_FORWARD,0);}
 bool motion_backward(void){return submit(S2_BACKWARD,0);}
 bool motion_set_wheel_levels(unsigned l,unsigned r){if(l>4||r>4)return false;if(!l&&!r)return motion_set_speed(0);return submit(S2_WHEELS,l|(r<<3));}
-bool motion_set_wheel_rpm(unsigned l,unsigned r)
+static bool set_wheel_rpm(unsigned l, unsigned r, uint16_t *command)
 {
-    if(l>126u || r>126u || (l&1u) || (r&1u))return false;
-    if(!l&&!r){motion_stop();return true;}
-    return submit(S2_WHEEL_RPM,(l/2u)|((r/2u)<<6));
+    if (l > 126u || r > 126u || (l & 1u) || (r & 1u)) return false;
+    if (!l && !r) {
+        if (command) return false;
+        motion_stop();
+        return true;
+    }
+    unsigned arg = (l / 2u) | ((r / 2u) << 6);
+    if (!submit(S2_WHEEL_RPM, arg)) return false;
+    if (command) *command = (uint16_t)(S2_WHEEL_RPM | (arg << 4));
+    return true;
+}
+bool motion_set_wheel_rpm(unsigned l, unsigned r)
+{
+    return set_wheel_rpm(l, r, NULL);
+}
+bool motion_set_wheel_rpm_tracked(unsigned l, unsigned r, uint16_t *command)
+{
+    return command && set_wheel_rpm(l, r, command);
 }
 bool motion_move_forward_mm(unsigned n){return n<=MAX_DISTANCE_MM && (n?submit(S2_MOVE_F,n):motion_ready());}
 bool motion_move_backward_mm(unsigned n){return n<=MAX_DISTANCE_MM && (n?submit(S2_MOVE_B,n):motion_ready());}
@@ -123,8 +138,17 @@ bool s2_take_request(uint16_t *word,uint32_t *issued)
     if(found){q.processing=1;*word=commands[q.head];*issued=issued_ms[q.head];q.head=(q.head+1)&7;q.count--;}
     unlock_transport();return found;
 }
-void s2_publish(const S2_STATUS *s,bool ready)
-{lock_transport();cached=*s;q.ready=ready;unlock_transport();}
+bool s2_publish(const S2_STATUS *s,bool ready)
+{
+    lock_transport();
+    bool changed = q.ready != ready;
+    for (unsigned i = 0; !changed && i < sizeof(cached.bytes); ++i)
+        changed = cached.bytes[i] != s->bytes[i];
+    cached = *s;
+    q.ready = ready;
+    unlock_transport();
+    return changed;
+}
 void s2_record_result(bool ok)
 {lock_transport();q.result=ok;q.processing=0;result_seq++;unlock_transport();}
 void s2_discard_queue(void)
@@ -142,4 +166,16 @@ bool motion_get_reply(S2_REPLY *out)
 {
     if(!transport_lock||!out)return false;
     lock_transport();*out=reply;bool ready=q.ready;unlock_transport();return ready;
+}
+
+bool motion_get_feedback(S2_STATUS *status, S2_REPLY *result, bool *busy)
+{
+    if (!transport_lock) return false;
+    lock_transport();
+    *status = cached;
+    if (result) *result = reply;
+    *busy = q.count || q.stop || q.processing || s2_get_bits(&cached, 0, 2) != 0;
+    bool ready = q.ready;
+    unlock_transport();
+    return ready;
 }

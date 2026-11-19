@@ -56,39 +56,48 @@ void s1_comm_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
 #if TM_MQTT
+    enum { COMMAND_BURST = 4, TELEMETRY_MS = 1000 };
     unsigned char frame[MQTT_BRIDGE_FRAME_MAX];
-    uint32_t telemetry_at=0;
+    uint32_t telemetry_at = 0;
     for (;;) {
-        unsigned budget;
-        unsigned char stop_seen = 0;
-
-        for (budget = 0; budget < 4u; ++budget) {
-            unsigned op;
-            unsigned char ack;
-            int length = mqtt_bridge_receive(frame);
-            if (length < 0) { break; }
-            if (length < 2 || frame[0] != MQTT_ROUTE_COMMAND) { continue; }
-            if (!s1_command_decode(frame + 1, (unsigned)length - 1u, &op)) {
-                ack = (unsigned char)((frame[1] & 1u) | 2u);
-            } else if (op == S1_CMD_STOP) {
-                vehicle_request_stop();
-                stop_seen = 1;
-                ack = S1_CMD_STOP;
-            } else if(op==S1_CMD_RESET){
-                ack=(unsigned char)(4u|((stop_seen||!vehicle_request_reset())?2u:0u));
-            } else {
-                /* STOP takes priority over any START in the same drained batch. */
-                ack = (unsigned char)(S1_CMD_START |
-                    ((stop_seen || !vehicle_request_start()) ? 2u : 0u));
-            }
-            (void)publish(MQTT_ROUTE_ACK, &ack, 1u);
-        }
-        SYSTIM time;tk_get_tim(&time);
-        if((uint32_t)(time.lo-telemetry_at)>=1000u){
-            telemetry_at=time.lo;
+        SYSTIM time;
+        tk_get_tim(&time);
+        uint32_t elapsed = time.lo - telemetry_at;
+        if (elapsed >= TELEMETRY_MS) {
+            telemetry_at = time.lo;
+            elapsed = 0;
             s1_publish_telemetry();
         }
-        (void)tk_dly_tsk(50);
+
+        unsigned char acks[COMMAND_BURST];
+        unsigned count = 0, budget;
+        bool stop_seen = false;
+        for (budget = 0; budget < COMMAND_BURST; ++budget) {
+            int wait = budget ? TMO_POL : TELEMETRY_MS - (int)elapsed;
+            int length = mqtt_bridge_receive(frame, wait);
+            if (length == E_OBJ) return;
+            if (length < 0) break;
+            if (length < 2 || frame[0] != MQTT_ROUTE_COMMAND) continue;
+            unsigned op;
+            unsigned char ack;
+            if (!s1_command_decode(frame + 1, (unsigned)length - 1u, &op)) {
+                ack = (unsigned char)((frame[1] & 1u) | 2u);
+            } else {
+                stop_seen |= op == S1_CMD_STOP;
+                ack = op == S1_CMD_RESET ? 4u : (unsigned char)op;
+            }
+            acks[count++] = ack;
+        }
+        /* A STOP anywhere in the batch cancels movement before ACKs are sent. */
+        if (stop_seen) vehicle_request_stop();
+        for (unsigned i = 0; i < count; ++i) {
+            unsigned char ack = acks[i];
+            if (ack == S1_CMD_START && (stop_seen || !vehicle_request_start())) ack |= 2u;
+            if (ack == 4u && (stop_seen || !vehicle_request_reset())) ack |= 2u;
+            (void)publish(MQTT_ROUTE_ACK, &ack, 1u);
+        }
+        /* Yield to sensing and controller tasks during a sustained burst. */
+        if (budget == COMMAND_BURST) (void)tk_dly_tsk(1);
     }
 #endif
 }

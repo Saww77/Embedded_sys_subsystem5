@@ -12,6 +12,8 @@
 #define S5_SERVO_CENTRE_US 1500u /* 90 degrees */
 #define S5_SERVO_LEFT_US 1833u   /* 150 degrees */
 
+void subsystem5_request_scan(void);
+
 #if APP_S5_BENCH
 EXPORT void subsystem5_bench(void);
 #endif

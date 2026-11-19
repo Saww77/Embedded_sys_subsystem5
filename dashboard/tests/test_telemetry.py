@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from app import Dashboard
+from app import CommandUnavailable, Dashboard
 from mqtt_protocol import decode_telemetry
 
 def motion_packet(faults=0,left=30,right=24):
@@ -100,7 +100,7 @@ class TelemetryTests(unittest.TestCase):
         self.send('controller',packet)
         state=self.d.snapshot()
         self.assertFalse(state['start_allowed'])
-        self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],'Junction / line stop latched')
+        self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],'Junction / line stop active')
         packet[3]=0;packet[4]=1|2|64;self.send('controller',packet)
         self.assertTrue(self.d.snapshot()['start_allowed'])
         packet[0]=2
@@ -116,6 +116,9 @@ class TelemetryTests(unittest.TestCase):
         self.assertFalse(state['start_allowed'])
         self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],
                          'Ultrasonic echo unavailable')
+        self.d.client = SimpleNamespace()
+        with self.assertRaisesRegex(CommandUnavailable, 'Ultrasonic echo unavailable'):
+            self.d.send('start')
 
         self.now += 3
         self.send('controller', packet)

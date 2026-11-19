@@ -13,7 +13,7 @@ static void step(VC_MODEL *model, VC_INPUT *input, VC_OUTPUT *output, unsigned m
 static VC_INPUT track_input(void)
 {
     return (VC_INPUT){
-        .ready = true, .line_valid = true, .link_required = true, .link_ok = true,
+        .ready = true, .line_valid = true, .link_ok = true,
         .left_rpm = 30, .right_rpm = 30,
         .avoidance = {.stopped = true, .range_valid = true, .range_mm = 1000,
                       .sensor_to_axle_mm = 60},
@@ -178,11 +178,11 @@ static void test_abort_paths(void)
         case NO_LINE: in.avoidance.motion = S5_MOTION_DONE; break;
         }
         step(&model, &in, &out, 20);
-        assert(out.stop && !model.running && model.avoidance.phase == S5_FAILED);
+        assert(out.stop && !vc_core_running(&model) && model.avoidance.phase == S5_FAILED);
         in = track_input();
         in.start = true;
         step(&model, &in, &out, 20);
-        assert(out.stop && !model.running); /* repositioning needs actual IR evidence */
+        assert(out.stop && !vc_core_running(&model)); /* repositioning needs actual IR evidence */
     }
 }
 

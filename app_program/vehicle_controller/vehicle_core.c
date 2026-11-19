@@ -1,14 +1,34 @@
 #include "vehicle_core.h"
 
-static bool detouring(const VC_MODEL *model)
+bool vc_core_detouring(const VC_MODEL *model)
 {
     return model->state == VC_AVOIDING || model->state == VC_RECOVER_LINE;
 }
 
+bool vc_core_running(const VC_MODEL *model)
+{
+    return model->state == VC_FOLLOW_LINE || vc_core_detouring(model);
+}
+
+VC_START_BLOCK vc_core_start_block(const VC_MODEL *model, const VC_INPUT *in)
+{
+    if (in->stop || in->reset || (!vc_core_running(model) && in->motor_busy))
+        return VC_START_STOP_PENDING;
+    if (in->motor_faults) return VC_START_MOTOR;
+    if (!in->link_ok) return VC_START_LINK;
+    if (!in->ready) return VC_START_STARTUP;
+    if (!in->line_valid) return VC_START_NO_LINE;
+    if (in->line_age_ms > VC_LINE_MAX_AGE_MS) return VC_START_OLD_LINE;
+    if (in->line_stop) return VC_START_LINE_STOP;
+    if (vc_core_detouring(model) || in->obstacle_blocked ||
+        (model->avoidance.phase == S5_FAILED &&
+         (!in->avoidance.line_hit || in->avoidance.line_junction))) return VC_START_OBSTACLE;
+    return VC_START_READY;
+}
+
 static void halt(VC_MODEL *model, VC_STATE state, VC_REASON reason)
 {
-    if (detouring(model)) model->avoidance.phase = S5_FAILED;
-    model->running = false;
+    if (vc_core_detouring(model)) model->avoidance.phase = S5_FAILED;
     model->state = state;
     model->reason = reason;
 }
@@ -17,32 +37,31 @@ void vc_core_step(VC_MODEL *m, const VC_INPUT *in, VC_OUTPUT *out)
 {
     *out = (VC_OUTPUT){.stop = true};
     if (in->stop) { halt(m, VC_IDLE, VC_REASON_STOP); return; }
-    if (in->motor_faults) { halt(m, VC_FAULT, VC_REASON_MOTOR); return; }
-
-    bool fresh = in->line_valid && in->line_age_ms <= VC_LINE_MAX_AGE_MS;
-    bool linked = !in->link_required || in->link_ok;
-    if (!m->running && in->start && in->ready && fresh && !in->line_stop &&
-        linked && !in->obstacle_blocked &&
-        (m->avoidance.phase != S5_FAILED || (in->avoidance.line_hit && !in->avoidance.line_junction))) {
-        m->running = true;
+    if (in->motor_faults || in->drive_failed) { halt(m, VC_FAULT, VC_REASON_MOTOR); return; }
+    if (in->reset) return;
+    if (!vc_core_running(m)) {
+        if (!in->start || vc_core_start_block(m, in) != VC_START_READY) return;
+        m->state = VC_FOLLOW_LINE;
         m->avoidance = (S5_AVOID){0};
     }
-    if (!m->running) return;
 
-    if (!linked) { halt(m, VC_FAULT, VC_REASON_LINK); return; }
+    if (!in->link_ok) { halt(m, VC_FAULT, VC_REASON_LINK); return; }
     if (!in->ready) { halt(m, VC_FAULT, VC_REASON_MOTOR); return; }
-    if (!fresh) { halt(m, VC_FAULT, VC_REASON_STALE_LINE); return; }
+    if (!in->line_valid || in->line_age_ms > VC_LINE_MAX_AGE_MS) {
+        halt(m, VC_FAULT, VC_REASON_STALE_LINE);
+        return;
+    }
     if (in->line_stop) { halt(m, VC_IDLE, VC_REASON_LINE_STOP); return; }
 
-    if (!detouring(m) && in->obstacle_blocked) {
-        if (!in->obstacle_detected) { halt(m, VC_IDLE, VC_REASON_OBSTACLE); return; }
+    if (!vc_core_detouring(m) && in->obstacle_blocked) {
+        if (!in->obstacle_detected) { halt(m, VC_FAULT, VC_REASON_OBSTACLE); return; }
         s5_avoid_begin(&m->avoidance, in->avoidance.now);
         m->avoidance.reverse_available = in->avoidance.can_retrace;
         m->state = VC_AVOIDING;
         m->reason = VC_REASON_OBSTACLE;
         return; /* Stop the line-follow velocity before starting the scan. */
     }
-    if (detouring(m)) {
+    if (vc_core_detouring(m)) {
         out->maneuver = s5_avoid_step(&m->avoidance, &in->avoidance);
         S5_PHASE phase = m->avoidance.phase;
         if (phase == S5_FAILED) { halt(m, VC_FAULT, VC_REASON_OBSTACLE); return; }

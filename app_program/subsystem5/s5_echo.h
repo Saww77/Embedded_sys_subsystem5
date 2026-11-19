@@ -4,7 +4,8 @@
 #include "s5_range.h"
 #include <stdint.h>
 
-enum { S5_CAPTURE_IDLE, S5_CAPTURE_RISE, S5_CAPTURE_FALL, S5_CAPTURE_DONE, S5_CAPTURE_BAD, S5_CAPTURE_LATE };
+enum { S5_CAPTURE_IDLE, S5_CAPTURE_RISE, S5_CAPTURE_FALL, S5_CAPTURE_DONE,
+       S5_CAPTURE_BAD, S5_CAPTURE_LATE, S5_CAPTURE_TRIGGER };
 
 typedef struct {
     uint32_t triggered_at, rose_at;

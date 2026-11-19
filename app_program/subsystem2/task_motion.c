@@ -3,6 +3,9 @@
 #include "motion_core.h"
 #include "motion_transport.h"
 #include "motion_hw.h"
+#if !APP_BUDDY1_DEMO
+#include "../vehicle_controller/vehicle_controller.h"
+#endif
 
 /* A relative tk_dly_tsk(10) in this port adds a 10ms guard tick and
  * can sleep 20ms. Use the kernel's phase-preserving 10ms cyclic releases.
@@ -62,10 +65,6 @@ EXPORT void motion_control_task(INT stacd,void *exinf)
         /* Discard already accumulated wakeups; never run catch-up PID bursts.
            A missed 20 ms release while moving still trips the 15 ms guard. */
         (void)tk_can_wup(owner_id);
-        /* Run the deadline-critical update before cross-core transport locks. */
-        s2_core_service();
-        uint32_t now=s2_now_ms();
-        bool ready=(uint32_t)(now-boot)>=S2_STARTUP_DELAY_MS;
         bool zero=false;
         bool stopped=s2_take_stop(&zero);
         if(stopped){
@@ -73,6 +72,10 @@ EXPORT void motion_control_task(INT stacd,void *exinf)
             s2_core_stop();if(zero)s2_core_set_speed(0);
             if(was_moving){stopped_at_ms=s2_now_ms();settling_active=true;}
         }
+        /* Honor a queued STOP before the PID can apply power on this release. */
+        s2_core_service();
+        uint32_t now=s2_now_ms();
+        bool ready=(uint32_t)(now-boot)>=S2_STARTUP_DELAY_MS;
         if(settling_active && (uint32_t)(s2_now_ms()-stopped_at_ms)>=
                               (S2_DIRECTION_SETTLE_US+999u)/1000u)settling_active=false;
         uint16_t word;uint32_t issued;
@@ -115,7 +118,12 @@ EXPORT void motion_control_task(INT stacd,void *exinf)
         }
         was_busy=busy;
         if(s2_core_faults())s2_discard_queue();
-        s2_publish(&snapshot,ready);
+        bool changed = s2_publish(&snapshot,ready);
         if(have)s2_record_owner_result(word,age,reason,accepted);
+#if !APP_BUDDY1_DEMO
+        if (changed || have || stopped) vehicle_notify_feedback();
+#else
+        (void)changed;
+#endif
     }
 }

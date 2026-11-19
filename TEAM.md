@@ -168,6 +168,12 @@ sends to it or waits on it. Agree on the data format before coding.
 | IF-04 | S4 → S3 | shared data under a mutex (owned by S3) | `app_stats`, `mtx_stats` | `APP_STATS`, read only while locked | *example* |
 | IF-05 | S4 → S1 | task control | `tid_led` | `tk_sus_tsk` / `tk_rsm_tsk` / `tk_chg_pri` | *example* |
 | IF-06 | S5 → vehicle controller → S1 | Mutex-protected controller snapshot | Controller mutex | Obstacle interlock, echo fault and profile fields | |
+| IF-07 | Vehicle controller ↔ S2 | Command queue and controller event flag | S2 transport mutex and controller event flag | Priority STOP, wheel targets, bounded maneuvers and acknowledged motor feedback | |
+| IF-08 | Vehicle controller ↔ S5 | Scan request event flag and controller event flag | S5 scan event flag and controller event flag | Start a scan after the wheels stop. A request ID scopes the result to the current detour. | |
+
+S5 uses RP2040 timer alarm 0 for the trigger pulse and echo deadlines. GPIO IRQ13
+captures encoder and echo edges on core 1 in dual-core firmware or core 0 in
+single-core firmware. Each handler acknowledges its own GPIO edges.
 
 Each interface is tested by at least one integration test
 (`testing/integration/TEST_LOG.md`).

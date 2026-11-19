@@ -145,7 +145,7 @@ static void b4_probe_dispatch_stop(const B4_PROCESSOR_OUTPUT *output,
 				  uint32_t sample_timestamp_ms)
 {
 	B4_SAFETY_DISPATCH_STATUS status = b4_safety_dispatch_stop(
-		output->safety_flags, motion_stop, vehicle_request_stop);
+		output->safety_flags, vehicle_request_stop);
 
 	if (status == B4_SAFETY_DISPATCH_DISPATCHED) {
 		tm_printf((UB *)"Buddy4 safety: stop dispatched t=%u ms "

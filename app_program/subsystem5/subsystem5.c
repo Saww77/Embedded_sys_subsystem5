@@ -10,7 +10,9 @@
 #define SERVO_HOME_SETTLE_MS 350
 #define PING_INTERVAL_MS 60
 #define RANGE_LOG_INTERVAL_MS 2000u
+#define SCAN_WAKE 1u
 
+static ID scan_event;
 static unsigned servo_angle = S5_CENTRE_ANGLE;
 static const char *const echo_status[] = {
     [S5_ECHO_QUIET] = "rise timeout",
@@ -219,7 +221,7 @@ static void scan_task(INT stacd, void *exinf)
 {
     (void)stacd;
     (void)exinf;
-    setup();
+    if (!setup()) return;
     tm_printf((UB*)"[S5] GP16 trigger, GP17 echo. Entry=%u mm, clear=%u mm\n",
               S5_SCAN_STOP_MM, S5_CLEAR_MM);
 
@@ -227,17 +229,18 @@ static void scan_task(INT stacd, void *exinf)
         S5_PING ping = s5_hw_ping();
         vehicle_submit_obstacle_range(ping.range_mm);
         log_forward(ping, "forward");
-        tk_dly_tsk(PING_INTERVAL_MS);
+        UINT events;
+        ER wake = tk_wai_flg(scan_event, SCAN_WAKE, TWF_ORW | TWF_BITCLR, &events, PING_INTERVAL_MS);
 
         uint32_t request;
-        S2_STATUS motion;
-        if (vehicle_obstacle_scan_request(&request) && motion_get_status(&motion) &&
-            s2_get_bits(&motion, 0, 2) == 0 && s2_get_bits(&motion, 9, 9) <= 2 &&
-            s2_get_bits(&motion, 18, 9) <= 2) {
+        if (wake == E_OK && vehicle_obstacle_scan_request(&request)) {
             S5_PROFILE profile;
-            if (scan_obstacle(&profile, FALSE, &request))
-                vehicle_submit_obstacle_profile(profile, request);
+            BOOL scanned = scan_obstacle(&profile, FALSE, &request);
+            vehicle_finish_obstacle_scan(scanned ? &profile : NULL, request);
             /* The sweep finishes with a forward ping. */
+            tk_dly_tsk(PING_INTERVAL_MS);
+        } else if (wake != E_TMOUT) {
+            /* A canceled request must still respect the transducer's quiet time. */
             tk_dly_tsk(PING_INTERVAL_MS);
         }
     }
@@ -342,13 +345,26 @@ EXPORT void subsystem5_bench(void)
 
 EXPORT ER subsystem5_init(void)
 {
+#ifdef CPU_RP2040
+    T_CFLG event = {0};
+    scan_event = tk_cre_flg(&event);
+    if (scan_event < E_OK) return scan_event;
+#endif
     return E_OK;
+}
+
+void subsystem5_request_scan(void)
+{
+#ifdef CPU_RP2040
+    if (scan_event > 0) (void)tk_set_flg(scan_event, SCAN_WAKE);
+#endif
 }
 
 EXPORT ER subsystem5_start(void)
 {
 #ifdef CPU_RP2040
     vehicle_enable_obstacle_monitor();
+    if (scan_event <= 0) return E_OBJ;
     ID task = app_start_task((FP)scan_task, S5_PRI_MAIN, TP_PRC2, "obstacle_scan");
     return task < E_OK ? task : E_OK;
 #else

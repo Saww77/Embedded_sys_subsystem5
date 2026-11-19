@@ -24,8 +24,7 @@ EXPORT void motion_control_task(INT stacd,void *exinf);
 EXPORT void subsystem2_test(void);
 /* Called by the GPIO dispatcher for each encoder edge. */
 void subsystem2_encoder_gpio_irq(unsigned gpio,uint32_t events);
-/* Task context ONLY. These enqueue requests; they never write motor outputs.
-   TODO TEAM: only the Vehicle Controller should normally call movement APIs. */
+/* Task context only. The vehicle controller owns production motor requests. */
 bool motion_set_speed(unsigned level); /* 0..4, zero requests priority stop */
 bool motion_increase_speed(void);
 bool motion_decrease_speed(void);
@@ -57,4 +56,7 @@ enum { S2_REPLY_NONE,S2_REPLY_OK,S2_REPLY_STALE,S2_REPLY_SETTLING,
        S2_REPLY_FAULT,S2_REPLY_BUSY,S2_REPLY_ZERO_SPEED,S2_REPLY_INVALID };
 typedef struct { uint32_t sequence,age_ms;uint16_t command;uint8_t reason;bool accepted; } S2_REPLY;
 bool motion_get_reply(S2_REPLY *out);
+/* Read status, optional reply and queued/active state under the same lock. */
+bool motion_get_feedback(S2_STATUS *status, S2_REPLY *reply, bool *busy);
+bool motion_set_wheel_rpm_tracked(unsigned left, unsigned right, uint16_t *command);
 #endif

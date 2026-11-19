@@ -5,6 +5,7 @@
 EXPORT ER subsystem2_init(void)
 {
     s2_hw_safe_outputs();
+    app_rp2040_timebase_init();
     return s2_transport_init();
 }
 EXPORT ER subsystem2_start(void)

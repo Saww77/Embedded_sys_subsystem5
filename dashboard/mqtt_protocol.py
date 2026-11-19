@@ -38,14 +38,14 @@ def decode_telemetry(kind, payload):
             raise ValueError('Invalid controller sensor or target range')
         blocks = ('Ready for START', 'Motor startup not ready', 'Wi-Fi/MQTT not ready',
                   'Motor fault latched', 'STOP / reset pending', 'No valid IR readings',
-                  'IR readings are stale', 'Junction / line stop latched', 'Obstacle interlock active')
+                  'IR readings are stale', 'Junction / line stop active', 'Obstacle interlock active')
         hints = ('Controller start checks pass.', 'Wait at least five seconds after powering the Pico.',
                  'Wait for Wi-Fi, broker and command subscription.',
                  'Inspect motor faults before resetting or restarting.',
                  'Allow the controller to process STOP before retrying.',
                  'Check the IR sensor AO connections and ADC read errors on USB serial.',
                  'The sensor task is not supplying fresh data; inspect USB serial.',
-                 'Place the car on a straight away from crossings, then restart the Pico. The junction test remains halted until restart.',
+                 'Place the car on a straight section away from crossings and wait for fresh IR readings.',
                  'Move nearby objects away and wait for the ultrasonic sensor to confirm the path is clear.')
         age = int.from_bytes(payload[14:16], 'little')
         return dict(state=STATES[payload[1]], stop_reason=payload[2], start_block=payload[3],

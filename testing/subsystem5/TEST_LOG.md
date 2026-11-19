@@ -2,7 +2,7 @@
 
 ## Integration
 
-The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on core 1. The ISR applies a 30 ms deadline to distance readings and watches an in-progress pulse for up to 60 ms. A complete 46.9–47.3 ms pulse matches the RCWL-9610A no-target response observed on the car. Two consecutive open results confirm that bearing. Missing, malformed and other late echoes are unavailable. The sweep retries after 60 ms at the same bearing. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
+The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on the motion core. Timer alarm 0 ends the trigger pulse and enforces the echo deadlines. GPIO IRQ13 timestamps edges and wakes the scan task on a complete or malformed echo. Distance readings have a 30 ms deadline. A pulse that has already started can be observed for up to 60 ms. A complete 46.9–47.3 ms pulse matches the RCWL-9610A no-target response observed on the car. Two consecutive open results confirm that bearing. Missing, malformed and other late echoes are unavailable. The sweep retries after 60 ms at the same bearing. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
 
 1. The forward monitor caps approach targets at 20 RPM within 450 mm. At or below 300 mm the controller stops the drive, waits for the wheels to settle, then sweeps 30°, 60°, 90°, 120°, and 150°.
 2. If an obstacle lies within 350 mm, the fine scan returns to its bearing. A forward hit takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan confirms each bearing with two consistent pings and expands in 5° steps. Two matching distance readings can span one missing ping within three attempts. Open-range confirmation requires consecutive pings. The scan runs until it brackets each edge or reaches the scan limit. After a missed bearing it checks up to two more bearings for a usable background return.
@@ -135,3 +135,27 @@ cc -std=c11 -Wall -Wextra -Werror testing/subsystem5/test_scan.c \
 /tmp/test_s5_scan
 python -m unittest discover -s dashboard/tests
 ```
+
+## Integrated controller and interrupt regression
+
+| Check | Result |
+|---|---|
+| Controller dispatcher with simulated motor acknowledgements | Passed. Checks unavailable and confirmed open ranges, loss of range between START and dispatch, STOP priority, motor settling, scan dispatch after the motor stops, and cancellation on link loss. |
+| Host echo, avoidance, and Buddy 4 safety regressions | Passed. |
+| Dashboard unit and browser tests | All 26 unit tests passed. The Chromium test with Mosquitto and a simulated Pico confirmed that echo loss disables START, a clear path re-enables it, and STOP remains available. |
+| Pico W firmware | MQTT with and without Subsystem 4, single-core UART, sensor-only, and stationary servo-scan profiles produced UF2 files. |
+| Robot | On-car timing, forward echo and detour behavior still need measurement. |
+
+The controller snapshot decreased from 124 to 52 bytes. The mission state and stop reason each use 3 bits, each blocker uses 4 bits, each IR darkness reading uses 10 bits, and each readiness flag uses 1 bit. The MQTT controller message is 31 bytes, its command payload is 1 byte, and the S2 queue stores 2-byte command words. The MQTT build with Subsystem 4 used 82,992 bytes of static RAM on baseline `9a56007` and 82,912 bytes after the change, measured as ELF data plus BSS with Pico SDK 2.2.0 and Arm GCC 12.2.1. These figures exclude runtime allocations.
+
+Run the dispatcher regression from the repository root.
+
+```sh
+cc -std=gnu11 -Wall -Wextra -Werror -fsanitize=undefined,bounds \
+  -DPROHIBIT_DEF_SIZE_T -D_PICO_RP2040_ -DCNF_SMP=1 -DTM_MQTT=1 -Iinclude -Iconfig \
+  testing/subsystem5/test_controller_events.c app_program/subsystem5/s5_avoid.c \
+  app_program/vehicle_controller/vehicle_core.c -o /tmp/test_controller_events
+/tmp/test_controller_events
+```
+
+With the integrated MQTT firmware and the wheels raised, hold a flat target about 45 cm straight ahead. Check that the USB serial `[S5] forward` log reports a measured range and that START becomes available once the other checks pass. Confirm STOP clears the wheel commands. Then verify the module's empty-track response before attempting a grounded detour.

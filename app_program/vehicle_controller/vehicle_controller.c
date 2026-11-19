@@ -4,6 +4,7 @@
 #include "../subsystem2/motion_config.h"
 #include "../subsystem1/s1_comm.h"
 #include "../subsystem3/subsystem3.h"
+#include "../subsystem5/subsystem5.h"
 #ifndef VC_AUTO_START
 #if TM_MQTT
 #define VC_AUTO_START 0
@@ -12,24 +13,24 @@
 #endif
 #endif
 #define VC_REFRESH_MS 100u
+#define VC_ACTION_TIMEOUT_MS 250u
 #define VC_RETRACE_MIN_MS 600u
+#define VC_WAKE 1u
 
 _Static_assert(S3_ADVANCE_MM > 0 && S3_ADVANCE_MM < 512u, "Axle offset must fit in 9 bits");
-static ID guard;
+enum { SCAN_OFF, SCAN_READY, SCAN_ACTIVE };
+static ID guard, work_event;
 static VEHICLE_SNAPSHOT data;
 static VC_MODEL model;
-static BOOL start_pending,stop_pending,auto_pending,reset_pending;
+static struct {
+    unsigned start:1, stop:1, line_stop:1, auto_start:1, reset:1;
+    unsigned obstacle_monitor:1, profile_valid:1, scan:2;
+} pending;
 static uint32_t reset_refreshed;
-static BOOL obstacle_monitor;
 static S5_RANGE_GATE obstacle_range;
-static uint32_t obstacle_range_at, full_profile_at;
+static uint32_t obstacle_range_at, full_profile_at, scan_request_id;
 static S5_PROFILE full_profile;
-static BOOL full_profile_valid;
 
-static bool detouring(void)
-{
-    return model.state == VC_AVOIDING || model.state == VC_RECOVER_LINE;
-}
 static bool line_hit(void)
 {
     return !(data.l >= LINE_DARK && data.r >= LINE_DARK) &&
@@ -37,80 +38,131 @@ static bool line_hit(void)
 }
 static bool range_valid(uint32_t now)
 {
-    return obstacle_monitor && s5_range_available(obstacle_range.range_mm) &&
+    return pending.obstacle_monitor && s5_range_available(obstacle_range.range_mm) &&
            now - obstacle_range_at <= S5_RANGE_MAX_AGE_MS;
 }
 static bool obstacle_blocked(uint32_t now)
 {
-    return obstacle_monitor && (obstacle_range.blocked || !range_valid(now));
+    return pending.obstacle_monitor && (obstacle_range.blocked || !range_valid(now));
 }
 static uint32_t now_ms(void) { SYSTIM t;tk_get_tim(&t);return t.lo; }
 static BOOL lock(void) { return guard>0 && tk_loc_mtx(guard,TMO_FEVR)>=E_OK; }
 static void unlock(void) { (void)tk_unl_mtx(guard); }
+void vehicle_notify_feedback(void)
+{
+    ID event = __atomic_load_n(&work_event, __ATOMIC_ACQUIRE);
+    if (event > 0) (void)tk_set_flg(event, VC_WAKE);
+}
+
 ER vehicle_init(void)
 {
-    T_CMTX m={0};m.mtxatr=TA_INHERIT;
-    guard=tk_cre_mtx(&m);
-    if(guard<E_OK)return guard;
-    data=(VEHICLE_SNAPSHOT){0};model=(VC_MODEL){0};
-    start_pending=stop_pending=reset_pending=FALSE;auto_pending=VC_AUTO_START;
-    obstacle_monitor=full_profile_valid=FALSE;
+    T_CMTX mutex = {.mtxatr = TA_INHERIT};
+    guard = tk_cre_mtx(&mutex);
+    if (guard < E_OK) return guard;
+    T_CFLG event = {0};
+    ID id = tk_cre_flg(&event);
+    if (id < E_OK) {
+        (void)tk_del_mtx(guard);
+        guard = 0;
+        return id;
+    }
+    pending.auto_start = VC_AUTO_START;
+    __atomic_store_n(&work_event, id, __ATOMIC_RELEASE);
     return E_OK;
 }
 void vehicle_submit_line(INT l,INT c,INT r,INT left,INT right,BOOL stop,unsigned barcode)
 {
     if(l<0||l>1000||c<0||c>1000||r<0||r>1000||left<0||left>126||right<0||right>126||
        (left&1)||(right&1)||barcode>4){vehicle_invalidate_line();return;}
-    uint32_t now=now_ms();
     if(!lock())return;
+    uint32_t now=now_ms();
     data.l=l;data.c=c;data.r=r;data.left_rpm=left;data.right_rpm=right;
     data.barcode=barcode;data.line_stop=stop;data.line_valid=TRUE;data.line_timestamp_ms=now;
     /* A stop recommendation must survive a newer non-stop sensor sample. */
-    if(stop){stop_pending=TRUE;start_pending=FALSE;auto_pending=FALSE;}
+    if (stop && (vc_core_running(&model) || pending.start)) pending.line_stop = true;
     unlock();
+    vehicle_notify_feedback();
 }
 void vehicle_invalidate_line(void)
-{ if(lock()){data.line_valid=FALSE;unlock();} }
+{
+    if (!lock()) return;
+    data.line_valid = FALSE;
+    unlock();
+    vehicle_notify_feedback();
+}
 BOOL vehicle_request_reset(void)
 {
-    S2_STATUS motor={{0}};
-    if(!motion_get_status(&motor) || s2_get_bits(&motor,0,2)!=0)return FALSE;
-    if(!lock())return FALSE;
-    BOOL ok=!model.running && !start_pending && !reset_pending && s2_get_bits(&motor,5,4)!=0;
-    if(ok){reset_pending=TRUE;reset_refreshed=now_ms()-VC_REFRESH_MS;auto_pending=FALSE;}
-    unlock();return ok;
+    if (!lock()) return FALSE;
+    S2_STATUS motor = {{0}};
+    bool busy = false;
+    BOOL ok = !vc_core_running(&model) && !pending.start && !pending.stop && !pending.reset &&
+              motion_get_feedback(&motor, NULL, &busy) && !busy &&
+              s2_get_bits(&motor, 5, 4) != 0;
+    if (ok) {
+        pending.reset = true;
+        reset_refreshed = now_ms() - VC_REFRESH_MS;
+        pending.auto_start = false;
+    }
+    unlock();
+    if (ok) vehicle_notify_feedback();
+    return ok;
 }
 void vehicle_request_stop(void)
-{ if(lock()){stop_pending=TRUE;start_pending=reset_pending=FALSE;auto_pending=FALSE;unlock();} }
-static VC_START_BLOCK start_block(BOOL ready,BOOL linked,unsigned faults,uint32_t now)
 {
-    if(faults)return VC_START_MOTOR;
-    if(!linked)return VC_START_LINK;
-    if(!ready)return VC_START_STARTUP;
-    if(!data.line_valid)return VC_START_NO_LINE;
-    if(now-data.line_timestamp_ms>VC_LINE_MAX_AGE_MS)return VC_START_OLD_LINE;
-    if(data.line_stop)return VC_START_LINE_STOP;
-    if (detouring() || obstacle_blocked(now) ||
-        (model.avoidance.phase == S5_FAILED && !line_hit())) return VC_START_OBSTACLE;
-    if(stop_pending || reset_pending)return VC_START_STOP_PENDING;
-    return VC_START_READY;
+    if (!lock()) return;
+    pending.stop = true;
+    pending.start = pending.reset = pending.auto_start = false;
+    motion_stop();
+    unlock();
+    vehicle_notify_feedback();
+}
+
+static BOOL link_ready(void)
+{
+#if TM_MQTT
+    return (s1_connection_status() & 7u) == 7u;
+#else
+    return TRUE;
+#endif
+}
+
+static VC_INPUT controller_input(BOOL ready, BOOL linked, unsigned faults, bool busy, uint32_t now)
+{
+    return (VC_INPUT){
+        .start = pending.start, .stop = pending.stop, .reset = pending.reset,
+        .ready = ready, .link_ok = linked, .motor_faults = faults, .motor_busy = busy,
+        .line_stop = data.line_stop || pending.line_stop, .line_valid = data.line_valid,
+        .line_age_ms = now - data.line_timestamp_ms,
+        .left_rpm = data.left_rpm, .right_rpm = data.right_rpm,
+        .obstacle_blocked = obstacle_blocked(now),
+        .obstacle_detected = range_valid(now) && obstacle_range.range_mm <= S5_CLEAR_MM,
+        .avoidance = {
+            .now = now, .range_at = obstacle_range_at, .range_mm = obstacle_range.range_mm,
+            .range_valid = range_valid(now), .profile_at = full_profile_at,
+            .profile = full_profile, .profile_valid = pending.profile_valid,
+            .line_at = data.line_timestamp_ms, .line_hit = line_hit(),
+            .line_junction = data.l >= LINE_DARK && data.r >= LINE_DARK,
+            .sensor_to_axle_mm = S3_ADVANCE_MM,
+        },
+    };
 }
 BOOL vehicle_request_start(void)
 {
-    S2_STATUS s={{0}};
-    BOOL ready=motion_get_status(&s);
-    BOOL linked=TRUE;
-#if TM_MQTT
-    linked=(s1_connection_status()&7u)==7u;
-#endif
-    if(!lock())return FALSE;
-    uint32_t now=now_ms();
-    VC_START_BLOCK block=start_block(ready,linked,s2_get_bits(&s,5,4),now);
-    data.last_start_reject=block;
-    BOOL ok=block==VC_START_READY;
-    if(ok){start_pending=TRUE;auto_pending=FALSE;}
+    if (!lock()) return FALSE;
+    S2_STATUS motor = {{0}};
+    bool busy = false;
+    BOOL ready = motion_get_feedback(&motor, NULL, &busy);
+    VC_INPUT input = controller_input(ready, link_ready(), s2_get_bits(&motor, 5, 4), busy, now_ms());
+    VC_START_BLOCK block = vc_core_start_block(&model, &input);
+    data.last_start_reject = block;
+    BOOL ok = block == VC_START_READY;
+    if (ok && !vc_core_running(&model)) {
+        pending.start = true;
+        pending.auto_start = false;
+    }
     unlock();
-    if(!ok)tm_printf((UB*)"[VEHICLE] START rejected: blocker=%u (1=startup 2=link 3=motor 4=stop 5=no-ADC 6=stale-ADC 7=junction 8=obstacle)\n",(unsigned)block);
+    if (ok) vehicle_notify_feedback();
+    else tm_printf((UB*)"[VEHICLE] START rejected: blocker=%u\n", (unsigned)block);
     return ok;
 }
 BOOL vehicle_submit_terrain(unsigned height,unsigned phase)
@@ -122,19 +174,19 @@ BOOL vehicle_submit_terrain(unsigned height,unsigned phase)
 void vehicle_enable_obstacle_monitor(void)
 {
     if (!lock()) return;
-    obstacle_monitor = TRUE;
+    pending.obstacle_monitor = true;
     obstacle_range = (S5_RANGE_GATE){.range_mm = S5_UNKNOWN_RANGE, .blocked = true};
-    start_pending = FALSE;
     unlock();
+    vehicle_notify_feedback();
 }
 
 void vehicle_submit_obstacle_range(unsigned range)
 {
     if (!lock()) return;
-    if (s5_accept_range(&obstacle_range, range)) {
+    bool accepted = s5_accept_range(&obstacle_range, range);
+    if (accepted) {
         obstacle_range_at = now_ms();
-        if (obstacle_range.blocked) start_pending = FALSE;
-        if (!detouring()) {
+        if (!vc_core_detouring(&model)) {
             data.obstacle_valid = s5_range_measured(range);
             data.obstacle_profile = false;
             if (data.obstacle_valid) {
@@ -147,19 +199,23 @@ void vehicle_submit_obstacle_range(unsigned range)
         }
     }
     unlock();
+    if (accepted) vehicle_notify_feedback();
 }
 
-static BOOL scan_pending(void)
+static BOOL scan_wanted(void)
 {
-    return model.avoidance.phase == S5_PROFILE_PATH && !full_profile_valid &&
-           !stop_pending;
+    return model.avoidance.phase == S5_PROFILE_PATH && !pending.profile_valid &&
+           !pending.stop && !pending.line_stop;
 }
 
 BOOL vehicle_obstacle_scan_request(uint32_t *request)
 {
-    if (!lock()) return FALSE;
-    BOOL allowed = scan_pending();
-    if (allowed) *request = model.avoidance.phase_at;
+    if (!request || !lock()) return FALSE;
+    BOOL allowed = scan_wanted() && pending.scan == SCAN_READY;
+    if (allowed) {
+        *request = scan_request_id;
+        pending.scan = SCAN_ACTIVE;
+    }
     unlock();
     return allowed;
 }
@@ -167,49 +223,52 @@ BOOL vehicle_obstacle_scan_request(uint32_t *request)
 BOOL vehicle_obstacle_scan_current(uint32_t request)
 {
     if (!lock()) return FALSE;
-    BOOL current = scan_pending() && model.avoidance.phase_at == request;
+    BOOL current = scan_wanted() && pending.scan == SCAN_ACTIVE && scan_request_id == request;
     unlock();
     return current;
 }
 
-void vehicle_submit_obstacle_profile(S5_PROFILE profile, uint32_t request)
+void vehicle_finish_obstacle_scan(const S5_PROFILE *profile, uint32_t request)
 {
     if (!lock()) return;
-    if (scan_pending() && model.avoidance.phase_at == request) {
+    BOOL current = scan_wanted() && pending.scan == SCAN_ACTIVE && scan_request_id == request;
+    if (current) pending.scan = SCAN_OFF;
+    if (current && profile) {
         uint32_t now = now_ms();
-        data.obstacle_valid = s5_range_measured(profile.nearest_mm);
+        data.obstacle_valid = s5_range_measured(profile->nearest_mm);
         data.obstacle_profile = data.obstacle_valid;
-        data.near_mm = profile.nearest_mm;
-        data.width_mm = profile.width_mm;
-        data.clear_left_mm = s5_range_measured(profile.left_mm) ? profile.left_mm : S5_UNKNOWN_RANGE;
-        data.clear_right_mm = s5_range_measured(profile.right_mm) ? profile.right_mm : S5_UNKNOWN_RANGE;
-        data.obstacle_angle_offset = profile.angle_offset_deg;
+        data.near_mm = profile->nearest_mm;
+        data.width_mm = profile->width_mm;
+        data.clear_left_mm = s5_range_measured(profile->left_mm) ? profile->left_mm : S5_UNKNOWN_RANGE;
+        data.clear_right_mm = s5_range_measured(profile->right_mm) ? profile->right_mm : S5_UNKNOWN_RANGE;
+        data.obstacle_angle_offset = profile->angle_offset_deg;
         data.obstacle_timestamp_ms = now;
-        full_profile = profile;
+        full_profile = *profile;
         full_profile_at = now;
-        full_profile_valid = TRUE;
+        pending.profile_valid = true;
     }
     unlock();
+    if (current) vehicle_notify_feedback();
 }
 BOOL vehicle_get_snapshot(VEHICLE_SNAPSHOT *out)
 {
     if(!out)return FALSE;
-    S2_STATUS motor={{0}};BOOL ready=motion_get_status(&motor),linked=TRUE;
-#if TM_MQTT
-    linked=(s1_connection_status()&7u)==7u;
-#endif
     if(!lock())return FALSE;
+    S2_STATUS motor={{0}};
+    bool busy=false;
+    BOOL ready=motion_get_feedback(&motor,NULL,&busy),linked=link_ready();
     *out=data;out->timestamp_ms=now_ms();out->motor_ready=ready;out->link_ready=linked;
-    out->start_pending=start_pending;out->stop_pending=stop_pending;out->reset_pending=reset_pending;
+    out->start_pending=pending.start;out->stop_pending=pending.stop;out->reset_pending=pending.reset;
     out->obstacle_blocked = obstacle_blocked(out->timestamp_ms);
-    out->obstacle_no_echo = obstacle_monitor && !range_valid(out->timestamp_ms) &&
+    out->obstacle_no_echo = pending.obstacle_monitor && !range_valid(out->timestamp_ms) &&
                             model.avoidance.phase != S5_PROFILE_PATH;
     out->avoidance_phase = model.avoidance.phase;
     out->avoidance_side = model.avoidance.side;
     out->motor_faults=s2_get_bits(&motor,5,4);
     out->timing_fault_gap_us=s2_core_timing_fault_gap_us();
     out->control_gap_limit_us=MAX_CONTROL_GAP_US;
-    out->start_block=start_block(ready,linked,out->motor_faults,out->timestamp_ms);
+    VC_INPUT input = controller_input(ready, linked, out->motor_faults, busy, out->timestamp_ms);
+    out->start_block = vc_core_start_block(&model, &input);
     unlock();return TRUE;
 }
 VC_STATE vehicle_state(void)
@@ -221,29 +280,70 @@ VC_STATE vehicle_state(void)
 }
 void vehicle_record_telemetry_drop(void)
 { if(lock()){if(data.telemetry_drops!=0xffffffffu)data.telemetry_drops++;unlock();} }
-static BOOL moving;
-static unsigned last_l=127,last_r=127;
-static uint32_t refreshed;
-/* Only this task submits movement commands. Track the queued request and
- * verify both encoder targets before accepting an idle motor as completion. */
-static uint16_t maneuver_command;
-static uint32_t maneuver_reply_at_submit;
-static bool maneuver_failed;
+static struct {
+    uint32_t sequence, issued_at, refreshed;
+    uint16_t command;
+    unsigned left_rpm:7, right_rpm:7, moving:1, velocity:1, retry:1, failed:1;
+} drive;
 static bool tracking_straight;
 static uint32_t straight_since;
-static S5_MOTION maneuver_result(void)
+static S5_MOTION drive_feedback(const S2_STATUS *status, const S2_REPLY *reply,
+                                bool busy, uint32_t now)
 {
-    if (maneuver_failed) return S5_MOTION_FAILED;
-    if (!maneuver_command) return S5_MOTION_NONE;
-    S2_REPLY reply;
-    if (!motion_get_reply(&reply) || reply.sequence == maneuver_reply_at_submit)
-        return S5_MOTION_QUEUED;
-    if (reply.command != maneuver_command || !reply.accepted) return S5_MOTION_FAILED;
-    if (motion_busy()) return S5_MOTION_PENDING;
-    S2_STATUS status;
-    if (!motion_get_status(&status) || !s2_core_maneuver_finished(maneuver_command >> 4, &status))
-        return S5_MOTION_FAILED;
-    return S5_MOTION_DONE;
+    if (!drive.command) return S5_MOTION_NONE;
+    bool unanswered = reply->sequence == drive.sequence;
+    if (unanswered && now - drive.issued_at < VC_ACTION_TIMEOUT_MS) return S5_MOTION_QUEUED;
+    bool matched = !unanswered && reply->command == drive.command;
+    if (drive.velocity) {
+        drive.command = 0;
+        drive.retry = matched && !reply->accepted && reply->reason == S2_REPLY_SETTLING;
+        drive.failed = !matched || (!reply->accepted && !drive.retry);
+        return S5_MOTION_NONE;
+    }
+    if (!matched || !reply->accepted) return S5_MOTION_FAILED;
+    if (busy) return S5_MOTION_PENDING;
+    return s2_core_maneuver_finished(drive.command >> 4, status) ? S5_MOTION_DONE : S5_MOTION_FAILED;
+}
+
+static void submit_output(const VC_INPUT *in, const VC_OUTPUT *out, const S2_REPLY *reply,
+                          bool detour)
+{
+    if (out->stop || (!detour && !out->left_rpm && !out->right_rpm)) {
+        if (!in->stop && (drive.moving || out->maneuver.action == S5_STOP)) motion_stop();
+        drive = (__typeof__(drive)){0};
+        return;
+    }
+
+    bool submitted;
+    if (detour) {
+        if (in->avoidance.motion == S5_MOTION_DONE) {
+            drive.command = 0;
+            drive.moving = false;
+        }
+        S5_ACTION action = out->maneuver.action;
+        if (action == S5_WAIT) return;
+        if (action == S5_REVERSE)
+            submitted = motion_maneuver_reverse(out->maneuver.distance_mm, &drive.command);
+        else
+            submitted = motion_maneuver(out->maneuver.distance_mm, action == S5_PIVOT_RIGHT,
+                                        &drive.command);
+        drive.velocity = false;
+    } else {
+        bool refresh = !drive.moving || in->avoidance.now - drive.refreshed >= VC_REFRESH_MS;
+        bool changed = out->left_rpm != drive.left_rpm || out->right_rpm != drive.right_rpm;
+        if (drive.command || !(refresh || (changed && !drive.retry))) return;
+        submitted = motion_set_wheel_rpm_tracked(out->left_rpm, out->right_rpm, &drive.command);
+        drive.velocity = true;
+        drive.left_rpm = out->left_rpm;
+        drive.right_rpm = out->right_rpm;
+        drive.refreshed = in->avoidance.now;
+    }
+    drive.failed = !submitted;
+    if (submitted) {
+        drive.moving = true;
+        drive.sequence = reply->sequence;
+        drive.issued_at = in->avoidance.now;
+    }
 }
 
 static const char *const avoidance_phase_name[] = {
@@ -264,40 +364,21 @@ static const char *const avoidance_phase_name[] = {
     [S5_BACK_UP] = "reversing for another scan",
 };
 
-static void vehicle_service_once(void)
+static TMO vehicle_service_once(void)
 {
-    S5_MOTION motion = maneuver_result();
+    if (!lock()) return VC_REFRESH_MS;
     S2_STATUS status = {{0}};
-    BOOL ready = motion_get_status(&status), linked = TRUE;
-#if TM_MQTT
-    linked = (s1_connection_status() & 7u) == 7u;
-#endif
-    if (!lock()) return;
+    S2_REPLY reply = {0};
+    bool busy = false;
+    BOOL ready = motion_get_feedback(&status, &reply, &busy);
     uint32_t now = now_ms();
-    BOOL reset = reset_pending;
-    VC_INPUT in = {0};
+    VC_INPUT in = controller_input(ready, link_ready(), s2_get_bits(&status, 5, 4), busy, now);
     VC_OUTPUT out;
-    in.ready = ready;
-    in.motor_faults = s2_get_bits(&status, 5, 4);
-    in.link_required = TM_MQTT;
-    in.link_ok = linked;
-    in.line_stop = data.line_stop;
-    in.line_valid = data.line_valid;
-    in.line_age_ms = now - data.line_timestamp_ms;
-    in.left_rpm = data.left_rpm;
-    in.right_rpm = data.right_rpm;
-    in.obstacle_blocked = obstacle_blocked(now);
-    in.obstacle_detected = range_valid(now) && obstacle_range.range_mm <= S5_SCAN_STOP_MM;
-    in.avoidance = (S5_AVOID_INPUT){
-        .now = now, .range_at = obstacle_range_at, .range_mm = obstacle_range.range_mm,
-        .range_valid = range_valid(now), .profile_at = full_profile_at,
-        .profile = full_profile, .profile_valid = full_profile_valid,
-        .line_at = data.line_timestamp_ms, .line_hit = line_hit(),
-        .line_junction = data.l >= LINE_DARK && data.r >= LINE_DARK,
-        .motion = motion, .sensor_to_axle_mm = S3_ADVANCE_MM,
-        .stopped = s2_get_bits(&status, 0, 2) == 0 &&
-                   s2_get_bits(&status, 9, 9) <= 2 && s2_get_bits(&status, 18, 9) <= 2,
-    };
+    in.avoidance.motion = drive_feedback(&status, &reply, busy, now);
+    in.drive_failed = drive.failed;
+    unsigned left_measured = s2_get_bits(&status, 9, 9);
+    unsigned right_measured = s2_get_bits(&status, 18, 9);
+    in.avoidance.stopped = ready && !busy && left_measured <= 2 && right_measured <= 2;
     /* Both outside sensors can see the original line together during the inward
        crossing. On the track heading both dark still indicates a junction. */
     in.avoidance.line_hit = in.avoidance.line_hit || in.avoidance.line_junction;
@@ -307,14 +388,12 @@ static void vehicle_service_once(void)
     in.avoidance.line_centered = !in.avoidance.line_hit;
 #endif
     if (model.avoidance.phase == S5_FIND_LINE &&
-        (motion == S5_MOTION_PENDING || motion == S5_MOTION_DONE)) {
+        (in.avoidance.motion == S5_MOTION_PENDING || in.avoidance.motion == S5_MOTION_DONE)) {
         unsigned cross_margin = S3_ADVANCE_MM + S5_SEARCH_MARGIN_MM;
         unsigned min_cross_mm = model.avoidance.offset_mm > cross_margin ?
                                 model.avoidance.offset_mm - cross_margin : 0;
         in.avoidance.near_original_line = s2_core_distance_reached(min_cross_mm, &status);
     }
-    unsigned left_measured = s2_get_bits(&status, 9, 9);
-    unsigned right_measured = s2_get_bits(&status, 18, 9);
     bool straight = model.state == VC_FOLLOW_LINE && in.avoidance.line_centered &&
                     in.left_rpm == in.right_rpm && left_measured >= 20 && right_measured >= 20 &&
                     left_measured <= right_measured + 3 && right_measured <= left_measured + 3 &&
@@ -322,66 +401,59 @@ static void vehicle_service_once(void)
     if (straight && !tracking_straight) straight_since = now;
     tracking_straight = straight;
     in.avoidance.can_retrace = straight && now - straight_since >= VC_RETRACE_MIN_MS;
-    in.stop = stop_pending;
-    in.start = start_pending;
-    if (auto_pending && ready && !in.obstacle_blocked &&
-        in.line_valid && in.line_age_ms <= VC_LINE_MAX_AGE_MS) {
+    VC_START_BLOCK blocker = vc_core_start_block(&model, &in);
+    if (pending.auto_start && blocker == VC_START_READY) {
         in.start = TRUE;
-        auto_pending = FALSE;
+        pending.auto_start = false;
     }
-    start_pending = stop_pending = FALSE;
+    if (pending.start && blocker != VC_START_READY) data.last_start_reject = blocker;
+    pending.start = pending.stop = pending.line_stop = false;
     S5_PHASE previous = model.avoidance.phase;
     vc_core_step(&model, &in, &out);
     S5_PHASE phase = model.avoidance.phase;
     unsigned side = model.avoidance.side;
     unsigned offset = model.avoidance.offset_mm;
     unsigned pass = model.avoidance.next_pass_mm;
-    unsigned reason = model.reason;
-    bool active = detouring();
-    if (phase == S5_PROFILE_PATH && previous != phase) full_profile_valid = FALSE;
+    if (in.reset && out.stop) {
+        if (!in.motor_faults) {
+            pending.reset = false;
+            model.state = VC_IDLE;
+            model.reason = VC_REASON_NONE;
+        } else if (!busy && now - reset_refreshed >= VC_REFRESH_MS) {
+            (void)motion_clear_faults();
+            reset_refreshed = now;
+        }
+    }
+
+    /* Serialize dispatch with the request latch, so STOP can cancel an entire
+       batch before any later movement is submitted. */
+    submit_output(&in, &out, &reply, vc_core_detouring(&model));
+    if (phase != previous) {
+        pending.scan = SCAN_OFF;
+        if (phase == S5_PROFILE_PATH) pending.profile_valid = false;
+    }
+    bool scan = scan_wanted() && pending.scan == SCAN_OFF && in.avoidance.stopped && !drive.moving;
+    if (scan) {
+        ++scan_request_id;
+        pending.scan = SCAN_READY;
+    }
     data.state = model.state;
-    data.reason = model.reason;
+    unsigned reason = data.reason = model.reason;
     data.motor_faults = in.motor_faults;
+    TMO delay = pending.reset ? (TMO)VC_REFRESH_MS : TMO_FEVR;
+    if (vc_core_running(&model)) {
+        uint32_t line_remaining = VC_LINE_MAX_AGE_MS + 1u - in.line_age_ms;
+        delay = line_remaining < VC_REFRESH_MS ? line_remaining : VC_REFRESH_MS;
+        if (in.avoidance.range_valid) {
+            uint32_t range_remaining = S5_RANGE_MAX_AGE_MS + 1u - (now - in.avoidance.range_at);
+            if (range_remaining < (uint32_t)delay) delay = range_remaining;
+        }
+    }
+    bool dispatch_failed = drive.failed;
     unlock();
 
-    if (reset && out.stop) {
-        if (!in.motor_faults) {
-            if (lock()) {
-                reset_pending = FALSE;
-                model.state = data.state = VC_IDLE;
-                model.reason = data.reason = VC_REASON_NONE;
-                unlock();
-            }
-        } else if ((uint32_t)(now - reset_refreshed) >= VC_REFRESH_MS) {
-            if (motion_clear_faults()) reset_refreshed = now;
-        }
-    }
-    if (out.stop) {
-        if (moving || maneuver_command || out.maneuver.action == S5_STOP) motion_stop();
-        moving = FALSE;
-        last_l = last_r = 127;
-        maneuver_command = 0;
-        maneuver_failed = false;
-    } else if (active) {
-        if (motion == S5_MOTION_DONE) maneuver_command = 0;
-        if (out.maneuver.action != S5_WAIT) {
-            S2_REPLY reply;
-            maneuver_failed = !motion_get_reply(&reply) ||
-                !(out.maneuver.action == S5_REVERSE ?
-                    motion_maneuver_reverse(out.maneuver.distance_mm, &maneuver_command) :
-                    motion_maneuver(out.maneuver.distance_mm, out.maneuver.action == S5_PIVOT_RIGHT,
-                                    &maneuver_command));
-            if (!maneuver_failed) maneuver_reply_at_submit = reply.sequence;
-        }
-    } else if (out.left_rpm != last_l || out.right_rpm != last_r || now - refreshed >= VC_REFRESH_MS) {
-        if (motion_set_wheel_rpm(out.left_rpm, out.right_rpm)) {
-            moving = TRUE;
-            last_l = out.left_rpm;
-            last_r = out.right_rpm;
-            refreshed = now;
-        }
-    }
-
+    if (scan) subsystem5_request_scan();
+    if (dispatch_failed) vehicle_notify_feedback();
     if (previous != phase) {
         tm_printf((UB*)"[S5] avoidance phase=%u side=%u at %u ms: %s\n",
                   (unsigned)phase, side, (unsigned)now, avoidance_phase_name[phase]);
@@ -392,12 +464,17 @@ static void vehicle_service_once(void)
             tm_printf((UB*)"[S5] stopped during %s, vehicle reason=%u\n",
                       avoidance_phase_name[previous], reason);
     }
+    return delay;
 }
 static void vehicle_task(INT stacd,void *exinf)
 {
     (void)stacd;(void)exinf;
-    moving=FALSE;last_l=last_r=127;refreshed=0;motion_stop();
-    for(;;){vehicle_service_once();(void)tk_dly_tsk(10);}
+    motion_stop();
+    for (;;) {
+        TMO delay = vehicle_service_once();
+        UINT events;
+        (void)tk_wai_flg(work_event, VC_WAKE, TWF_ORW | TWF_BITCLR, &events, delay);
+    }
 }
 ER vehicle_start_task(void)
 { ID id=app_start_task((FP)vehicle_task,15,TP_PRC1,"vehicle_controller");return id<E_OK?id:E_OK; }
