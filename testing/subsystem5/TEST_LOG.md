@@ -35,13 +35,26 @@ At startup, keep the box out of the sweep. The bench holds the sensor at 30°, 4
 
 With the head centred at 90°, verify the 30° and 150° positions point 60° right and left of straight ahead. At 45° and 135°, verify the head points along the two departure diagonals. If needed, copy `config/s5_servo_calibration.example.h` to `config/s5_servo_calibration.h` and adjust the right, centre and left pulses to suit the mounted sensor. Keep the pulses within the servo's specified range and the mount's free travel. If a similar near echo appears with the box removed, move the wire bundles and USB cable out of the sensor's sweep and repeat the bench check. If the empty track is clear but the box still fills the sweep, an outer pulse can be enabled independently on each side after verifying free movement at 75° from forward. Use `S5_SERVO_LEFT_OUTER_US` for 165° or `S5_SERVO_RIGHT_OUTER_US` for 15°. Rebuild and use the same calibration file for the bench and integrated firmware.
 
-For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. The bench prints measured clearance, open, or unavailable separately for each side. A resolved profile prints `width=… mm`. The `nearest_distance` field reports how far away the closest return is. The scan reports `width=unavailable` if the face or edge echoes do not support an estimate. The optional beam-projected span helps diagnose broad returns. A bypass requires a measured width and a side with room for the diagonal.
+For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. The bench prints measured clearance, open, or unavailable separately for each side. A resolved profile prints `width=… mm`. The `nearest_distance` field reports how far away the closest return is. The scan reports `width=unavailable` if the face or edge echoes do not support an estimate. The width scan log lists the depth and the two echo transition brackets. A bypass requires a measured width and a side with room for the diagonal.
 
 Measure the width across the tape-facing panel with the box in its test orientation. Turning a rectangular box changes the width presented to the car. In the integrated firmware, a sweep with unavailable width logs the exact rejection reason and its sampled `[S5] width echo` bearings at 115200 baud. The readings use 4094 for confirmed open space and 4095 for unavailable.
 
 To check a narrow target that gives an unconfirmed width, repeat the motor-off scan with a flat face square to the sensor at about 120 mm. This gives a slightly larger difference between the straight-ahead and corner ranges. An 80 mm face centred at 190 mm gives a theoretical difference of only about 4 mm, compared with about 6.5 mm at 120 mm.
 
 `rise timeout` means no rising edge was captured within 30 ms. `fall timeout` means the echo started and did not finish within 60 ms. `late fall` reports the measured pulse duration when an echo that started on time ends between 30 and 60 ms. The range remains unavailable. The observed RCWL-9610A pulse is reported as `no target` with `range=open`. `high before trigger` means GP17 was already high at the start of the ping. If repeated with a flat target straight ahead, check GP16, level-shifted GP17, sensor supply and common ground. If the servo stays still when the commanded angle changes, check the GP12 header, plug orientation and servo supply.
+
+## Width calibration for off-axis echoes
+
+1. Run the motor-off bench with a flat target square to the sensor and centred horizontally. Measure its actual width. Record the `width scan` line when it reports `off_axis=1`. The left and right brackets in that line are magnitudes from straight ahead.
+2. Repeat at the depths you expect on the track, including near 220 mm. Use known targets of different widths where possible. Fit the offsets with one `--sample WIDTH DEPTH LEFT_HIT LEFT_BACKGROUND RIGHT_HIT RIGHT_BACKGROUND` per capture. The script checks that the resulting left and right corrections agree across the captures.
+3. This command uses the earlier 80 mm capture as an example. That capture only supplies calibration near 190 mm. Replace the example with your measured samples to cover other depths.
+
+   ```sh
+   python3 testing/subsystem5/calibrate_width.py --sample 80 190 45 55 40 45 \
+     --output config/s5_width_calibration.h
+   ```
+
+4. Rebuild the bench and check a known target that was held out of calibration. The calibrated estimate displays `method=calibrated beam`. Repeat or refine calibration if the error is too large. The estimate assumes the target presents an approximately flat face and the echo transition is repeatable. When available, 1° refinement narrows the transition brackets. The drive still checks its conservative motion bounds and directly measured departure clearance.
 
 ## Data representation
 

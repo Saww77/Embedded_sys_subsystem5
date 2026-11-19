@@ -105,19 +105,19 @@ static void test_scan_and_profile(void)
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
 }
 
-static void test_observed_span_without_clearance(void)
+static void test_width_scan_requires_clearance(void)
 {
     S5_SCAN scan = {0};
     for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&scan, i, S5_UNKNOWN_RANGE);
     for (unsigned i = 8; i <= 15; ++i) s5_scan_set(&scan, i, 176);
     s5_scan_set(&scan, 8, 189); /* 70 degrees, the last hit on the left */
-    unsigned span = 0;
-    S5_PROFILE profile = s5_profile(&scan, 5, 18, S5_CENTRE_INDEX, &span);
-    assert(span == 109 && profile.nearest_mm == 176);
+    S5_WIDTH_SCAN width_scan;
+    S5_PROFILE profile = s5_profile(&scan, 5, 18, S5_CENTRE_INDEX, &width_scan);
+    assert(width_scan.face_mm == 0 && profile.nearest_mm == 176);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH);
     assert(!profile.left_edge_valid && !profile.right_edge_valid);
-    profile = s5_profile(&scan, S5_CENTRE_INDEX, S5_CENTRE_INDEX, S5_CENTRE_INDEX, &span);
-    assert(span == 0 && profile.width_mm == S5_UNKNOWN_WIDTH);
+    profile = s5_profile(&scan, S5_CENTRE_INDEX, S5_CENTRE_INDEX, S5_CENTRE_INDEX, &width_scan);
+    assert(width_scan.face_mm == 0 && profile.width_mm == S5_UNKNOWN_WIDTH);
 }
 
 static void test_repeat_and_narrow_target(void)
@@ -132,9 +132,8 @@ static void test_repeat_and_narrow_target(void)
     s5_scan_set(&scan, 11, S5_OPEN_RANGE);
     s5_scan_set(&scan, 12, 300);
     s5_scan_set(&scan, 13, S5_OPEN_RANGE);
-    unsigned span;
-    S5_PROFILE profile = s5_profile(&scan, 11, 13, 12, &span);
-    assert(span == 0 && profile.width_mm == S5_UNKNOWN_WIDTH && profile.front_mm == 300);
+    S5_PROFILE profile = s5_profile(&scan, 11, 13, 12, NULL);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.front_mm == 300);
     assert(profile.left_edge_mm == -27 && profile.right_edge_mm == 27);
 }
 
@@ -262,14 +261,31 @@ static void test_80_mm_bench_target_with_unstable_corner_ranges(void)
         s5_scan_set(&scan, S5_CENTRE_INDEX - i, left[i]);
     for (unsigned i = 0; i < sizeof(right) / sizeof(*right); ++i)
         s5_scan_set(&scan, S5_CENTRE_INDEX + i, right[i]);
+    S5_WIDTH_SCAN width_scan;
     S5_PROFILE profile = s5_profile(&scan, S5_CENTRE_INDEX - 11, S5_CENTRE_INDEX + 9,
-                                    S5_CENTRE_INDEX, NULL);
+                                    S5_CENTRE_INDEX, &width_scan);
     assert(profile.nearest_mm == 189 && profile.left_edge_valid && profile.right_edge_valid);
     assert(profile.left_mm == 630 && profile.right_mm == 1196);
     assert(profile.left_edge_mm == -213 && profile.right_edge_mm == 158);
     /* The prior extrapolation returned 212 mm. The scan has a bracket for
      * each edge, but the measured end ranges do not locate either corner. */
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_BOTH_ECHOES);
+    assert(width_scan.off_axis && width_scan.face_mm == 190);
+    assert(width_scan.left_hit_deg == 45 && width_scan.left_background_deg == 55);
+    assert(width_scan.right_hit_deg == 40 && width_scan.right_background_deg == 45);
+
+    /* Excess angles fitted independently using the measured 80 mm target. */
+    S5_WIDTH_CALIBRATION calibration = {381, 306, 185, 195};
+    assert(s5_calibrated_width(&width_scan, &calibration) == 80);
+    width_scan.face_mm = 206;
+    assert(s5_calibrated_width(&width_scan, &calibration) == S5_UNKNOWN_WIDTH);
+    width_scan.face_mm = 190;
+    width_scan.off_axis = false;
+    assert(s5_calibrated_width(&width_scan, &calibration) == S5_UNKNOWN_WIDTH);
+
+    /* A wider target at the same depth, assuming the same calibrated beam. */
+    width_scan = (S5_WIDTH_SCAN){190, 58, 59, 50, 51, true};
+    assert(s5_calibrated_width(&width_scan, &calibration) == 140);
 }
 
 int main(void)
@@ -277,7 +293,7 @@ int main(void)
     test_echo_pairing();
     test_rcwl_no_target();
     test_scan_and_profile();
-    test_observed_span_without_clearance();
+    test_width_scan_requires_clearance();
     test_repeat_and_narrow_target();
     test_box_width_from_ray_brackets();
     test_box_width_with_wide_beam();

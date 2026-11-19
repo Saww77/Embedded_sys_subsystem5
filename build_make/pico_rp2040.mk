@@ -278,6 +278,9 @@ PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRAS
 ifneq ($(wildcard ../config/s5_servo_calibration.h),)
 PROFILE_ID := $(PROFILE_ID)-s5calibrated
 endif
+ifneq ($(wildcard ../config/s5_width_calibration.h),)
+PROFILE_ID := $(PROFILE_ID)-s5widthcalibrated
+endif
 PROFILE_FILE := .build_profile
 
 ifneq ($(strip $(shell cat $(PROFILE_FILE) 2>/dev/null)),$(PROFILE_ID))

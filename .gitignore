@@ -17,6 +17,7 @@ config/wifi_secrets.h
 
 # Servo calibration is specific to each car.
 config/s5_servo_calibration.h
+config/s5_width_calibration.h
 
 # Videos are shared as unlisted YouTube links (videos/README.md), never committed
 *.mp4

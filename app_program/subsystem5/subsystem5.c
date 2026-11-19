@@ -19,6 +19,21 @@ _Static_assert(S5_BYPASS_TURN_DEG % S5_FINE_STEP == 0 && BYPASS_SCAN_STEPS <= S5
 
 static ID scan_event;
 static unsigned servo_angle = S5_CENTRE_ANGLE;
+#if __has_include("s5_width_calibration.h")
+#include "s5_width_calibration.h"
+_Static_assert(S5_WIDTH_CAL_MIN_MM > 0 && S5_WIDTH_CAL_MIN_MM <= S5_WIDTH_CAL_MAX_MM &&
+               S5_WIDTH_CAL_MAX_MM <= S5_CLEAR_MM, "Width calibration must fit the scan range");
+_Static_assert(S5_WIDTH_LEFT_EXCESS_TENTHS <= 750u && S5_WIDTH_RIGHT_EXCESS_TENTHS <= 750u,
+               "Width calibration angles must fit the sweep");
+static const S5_WIDTH_CALIBRATION width_calibration = {
+    .left_excess_tenths = S5_WIDTH_LEFT_EXCESS_TENTHS,
+    .right_excess_tenths = S5_WIDTH_RIGHT_EXCESS_TENTHS,
+    .min_face_mm = S5_WIDTH_CAL_MIN_MM,
+    .max_face_mm = S5_WIDTH_CAL_MAX_MM,
+};
+#else
+static const S5_WIDTH_CALIBRATION width_calibration = {0};
+#endif
 static const char *const echo_status[] = {
     [S5_ECHO_QUIET] = "rise timeout",
     [S5_ECHO_PULSE] = "pulse",
@@ -81,9 +96,9 @@ static void log_ping(const char *tag, const char *context, unsigned angle, S5_PI
                   ping.range_mm == S5_OPEN_RANGE ? "open" : "unavailable");
 }
 
-static unsigned read_at(unsigned index, BOOL verbose, bool fine, unsigned edge_reference)
+static unsigned read_bearing(unsigned angle, BOOL verbose, bool fine, unsigned edge_reference)
 {
-    aim(s5_scan_bearing(index));
+    aim(angle);
     unsigned previous = S5_UNKNOWN_RANGE;
     const unsigned attempts = fine ? FINE_ATTEMPTS : 3u;
     bool edge = s5_range_measured(edge_reference);
@@ -104,6 +119,26 @@ static unsigned read_at(unsigned index, BOOL verbose, bool fine, unsigned edge_r
         previous = ping.range_mm;
     }
     return edge ? s5_edge_background(ranges, attempts, edge_reference) : S5_UNKNOWN_RANGE;
+}
+
+static unsigned read_at(unsigned index, BOOL verbose, bool fine, unsigned edge_reference)
+{
+    return read_bearing(s5_scan_bearing(index), verbose, fine, edge_reference);
+}
+
+/* Find the echo transition to one degree wherever the returns are consistent. */
+static void refine_width_edge(unsigned *hit, unsigned *background, int side,
+                              unsigned reference, BOOL verbose, const uint32_t *request)
+{
+    while (*background - *hit > 1u) {
+        if (request && !vehicle_obstacle_scan_current(*request)) return;
+        unsigned middle = (*hit + *background) / 2u;
+        unsigned angle = (unsigned)((int)S5_CENTRE_ANGLE + side * (int)middle);
+        unsigned range = read_bearing(angle, verbose, true, reference);
+        if (s5_same_obstacle(range, reference)) *hit = middle;
+        else if (s5_background_beyond(range, reference)) *background = middle;
+        else break;
+    }
 }
 
 /* Consecutive missing bearings bound the scan work in the driving profile. */
@@ -183,8 +218,26 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     unsigned last = scan_edge(&samples, anchor, fine, 1, verbose, request);
     if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
 
-    unsigned observed_span;
-    *profile = s5_profile(&samples, first, last, anchor, verbose ? &observed_span : NULL);
+    S5_WIDTH_SCAN width_scan;
+    *profile = s5_profile(&samples, first, last, anchor, &width_scan);
+    bool calibrated = width_scan.off_axis && width_calibration.min_face_mm &&
+                      width_scan.face_mm >= width_calibration.min_face_mm &&
+                      width_scan.face_mm <= width_calibration.max_face_mm;
+    if (width_scan.off_axis && (verbose || calibrated)) {
+        refine_width_edge(&width_scan.left_hit_deg, &width_scan.left_background_deg,
+                          1, fine, verbose, request);
+        refine_width_edge(&width_scan.right_hit_deg, &width_scan.right_background_deg,
+                          -1, fine, verbose, request);
+        if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
+    }
+    if (verbose && width_scan.face_mm)
+        tm_printf((UB*)"%s width scan depth=%u mm left=%u..%u deg right=%u..%u deg off_axis=%u\n",
+                  tag, width_scan.face_mm, width_scan.left_hit_deg, width_scan.left_background_deg,
+                  width_scan.right_hit_deg, width_scan.right_background_deg, (unsigned)width_scan.off_axis);
+    if (calibrated) {
+        profile->width_mm = s5_calibrated_width(&width_scan, &width_calibration);
+        profile->width_status = profile->width_mm == S5_UNKNOWN_WIDTH ? S5_WIDTH_BOTH_ECHOES : S5_WIDTH_OK;
+    }
     profile->left_path_mm = read_at(S5_CENTRE_INDEX - BYPASS_SCAN_STEPS, verbose, true, S5_UNKNOWN_RANGE);
     if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
     profile->right_path_mm = read_at(S5_CENTRE_INDEX + BYPASS_SCAN_STEPS, verbose, true, S5_UNKNOWN_RANGE);
@@ -209,18 +262,13 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
                 tm_printf((UB*)"[S5] width echo angle=%u deg range=%u mm\n",
                           s5_scan_bearing(i), s5_scan_get(&samples, i));
         }
-        if (verbose) {
-            if (observed_span > 0)
-                tm_printf((UB*)"%s observed_echo_span=%u mm. Width unconfirmed.\n",
-                          tag, observed_span);
-            if (!profile->left_edge_valid || !profile->right_edge_valid)
-                tm_printf((UB*)"%s Use a box narrow enough to see past both edges, with a background over %u mm farther away.\n",
-                          tag, S5_PROFILE_TOLERANCE_MM);
-        }
+        if (verbose && (!profile->left_edge_valid || !profile->right_edge_valid))
+            tm_printf((UB*)"%s Use a box narrow enough to see past both edges, with a background over %u mm farther away.\n",
+                      tag, S5_PROFILE_TOLERANCE_MM);
     } else {
-        tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg\n",
+        tm_printf((UB*)"%s profile nearest_distance=%u mm width=%u mm angle=%u deg method=%s\n",
                   tag, (unsigned)profile->nearest_mm, (unsigned)profile->width_mm,
-                  s5_servo_angle(profile->angle_offset_deg));
+                  s5_servo_angle(profile->angle_offset_deg), calibrated ? "calibrated beam" : "edge geometry");
     }
     return TRUE;
 

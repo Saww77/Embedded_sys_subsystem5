@@ -55,6 +55,19 @@ typedef struct {
     uint8_t bytes[(S5_SCAN_POINTS * 12u + 7u) / 8u];
 } S5_SCAN;
 
+/* Magnitudes of each edge bracket, in degrees from straight ahead. */
+typedef struct {
+    unsigned face_mm;
+    unsigned left_hit_deg, left_background_deg;
+    unsigned right_hit_deg, right_background_deg;
+    bool off_axis;
+} S5_WIDTH_SCAN;
+
+typedef struct {
+    unsigned left_excess_tenths, right_excess_tenths;
+    unsigned min_face_mm, max_face_mm;
+} S5_WIDTH_CALIBRATION;
+
 void s5_scan_set(S5_SCAN *scan, unsigned index, unsigned range);
 unsigned s5_scan_get(const S5_SCAN *scan, unsigned index);
 unsigned s5_scan_target(const S5_SCAN *scan);
@@ -62,7 +75,8 @@ bool s5_same_obstacle(unsigned range, unsigned reference);
 bool s5_background_beyond(unsigned range, unsigned reference);
 /* Confirm a background bearing from the full fine-scan sample window. */
 unsigned s5_edge_background(const unsigned *ranges, unsigned count, unsigned reference);
-/* Optionally reports the lateral span between the outermost target echoes. */
+/* Optionally reports the angular edge brackets of a measurable flat face. */
 S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor,
-                      unsigned *observed_span_mm);
+                      S5_WIDTH_SCAN *width_scan);
+unsigned s5_calibrated_width(const S5_WIDTH_SCAN *scan, const S5_WIDTH_CALIBRATION *calibration);
 #endif

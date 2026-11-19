@@ -9,6 +9,7 @@
 #define WIDTH_STABLE_CORNER_MM 6u
 #define WIDTH_EDGE_CANDIDATES 3u
 #define WIDTH_MAX_SUPPORT_GAP 3u
+#define TENTHS_PER_STEP (S5_FINE_STEP * 10u)
 
 _Static_assert(S5_CLEAR_MM <= S5_MAX_PROJECTED_FRONT_MM, "Front projection must cover the obstacle window");
 
@@ -25,12 +26,6 @@ static unsigned angle_steps(unsigned index)
     return index < S5_CENTRE_INDEX ? S5_CENTRE_INDEX - index : index - S5_CENTRE_INDEX;
 }
 
-static int lateral_mm(unsigned index, unsigned range_mm)
-{
-    int projection = range_mm * sine[angle_steps(index)] / 1024u;
-    return index < S5_CENTRE_INDEX ? -projection : projection;
-}
-
 static unsigned project_forward_mm(unsigned index, unsigned range_mm)
 {
     return range_mm * cosine[angle_steps(index)] / 1024u;
@@ -41,6 +36,40 @@ static int edge_bound_mm(unsigned bearing, unsigned obstacle_depth)
     unsigned angle = angle_steps(bearing);
     int projection = (obstacle_depth * sine[angle] + cosine[angle] - 1u) / cosine[angle];
     return bearing < S5_CENTRE_INDEX ? -projection : projection;
+}
+
+static unsigned width_extent_at(unsigned face_mm, unsigned angle_tenths)
+{
+    unsigned step = angle_tenths / TENTHS_PER_STEP;
+    unsigned fraction = angle_tenths % TENTHS_PER_STEP;
+    unsigned sin_scaled = sine[step] * TENTHS_PER_STEP;
+    unsigned cos_scaled = cosine[step] * TENTHS_PER_STEP;
+    if (fraction) {
+        sin_scaled += (sine[step + 1u] - sine[step]) * fraction;
+        cos_scaled -= (cosine[step] - cosine[step + 1u]) * fraction;
+    }
+    return (face_mm * sin_scaled + cos_scaled / 2u) / cos_scaled;
+}
+
+unsigned s5_calibrated_width(const S5_WIDTH_SCAN *scan, const S5_WIDTH_CALIBRATION *calibration)
+{
+    if (!scan->off_axis || !calibration->min_face_mm || scan->face_mm < calibration->min_face_mm ||
+        scan->face_mm > calibration->max_face_mm || scan->face_mm > S5_CLEAR_MM ||
+        scan->left_hit_deg >= scan->left_background_deg || scan->right_hit_deg >= scan->right_background_deg ||
+        scan->left_background_deg > S5_SCAN_MAX_ANGLE - S5_CENTRE_ANGLE ||
+        scan->right_background_deg > S5_CENTRE_ANGLE - S5_SCAN_MIN_ANGLE ||
+        scan->left_background_deg - scan->left_hit_deg > MAX_EDGE_BRACKET_STEPS * S5_FINE_STEP ||
+        scan->right_background_deg - scan->right_hit_deg > MAX_EDGE_BRACKET_STEPS * S5_FINE_STEP)
+        return S5_UNKNOWN_WIDTH;
+
+    /* Midpoint of each echo transition, expressed in tenths of a degree. */
+    unsigned left = (scan->left_hit_deg + scan->left_background_deg) * 5u;
+    unsigned right = (scan->right_hit_deg + scan->right_background_deg) * 5u;
+    if (left <= calibration->left_excess_tenths || right <= calibration->right_excess_tenths)
+        return S5_UNKNOWN_WIDTH;
+    unsigned width = width_extent_at(scan->face_mm, left - calibration->left_excess_tenths) +
+                     width_extent_at(scan->face_mm, right - calibration->right_excess_tenths);
+    return width > 0 && width <= MAX_WIDTH_MM ? width : S5_UNKNOWN_WIDTH;
 }
 
 void s5_scan_set(S5_SCAN *scan, unsigned index, unsigned range)
@@ -229,8 +258,9 @@ static S5_EDGE profile_edge(const S5_SCAN *scan, unsigned anchor, unsigned limit
 }
 
 S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsigned anchor,
-                      unsigned *observed_span_mm)
+                      S5_WIDTH_SCAN *width_scan)
 {
+    if (width_scan) *width_scan = (S5_WIDTH_SCAN){0};
     S5_EDGE left = profile_edge(scan, anchor, first, -1);
     S5_EDGE right = profile_edge(scan, anchor, last, 1);
     unsigned near = anchor;
@@ -269,10 +299,6 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
         result.right_edge_mm = edge_bound_mm(right.boundary, depth);
         result.right_edge_valid = true;
     }
-    int left_hit = lateral_mm(left.last_hit, s5_scan_get(scan, left.last_hit));
-    int right_hit = lateral_mm(right.last_hit, s5_scan_get(scan, right.last_hit));
-    int span = right_hit - left_hit;
-    if (observed_span_mm) *observed_span_mm = span > 0 ? (unsigned)span : 0u;
     /* The width estimate is independent of the conservative motion bounds. */
     if (!result.left_edge_valid || !result.right_edge_valid) {
         result.width_status = result.left_edge_valid ? S5_WIDTH_RIGHT_EDGE :
@@ -283,6 +309,19 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     if (!s5_range_measured(depth) || result.nearest_mm + WIDTH_FACE_TOLERANCE_MM < depth) {
         result.width_status = S5_WIDTH_FACE;
         return result;
+    }
+    if (width_scan) {
+        *width_scan = (S5_WIDTH_SCAN){
+            .face_mm = depth,
+            .left_hit_deg = angle_steps(left.last_hit) * S5_FINE_STEP,
+            .left_background_deg = angle_steps(left.boundary) * S5_FINE_STEP,
+            .right_hit_deg = angle_steps(right.last_hit) * S5_FINE_STEP,
+            .right_background_deg = angle_steps(right.boundary) * S5_FINE_STEP,
+            .off_axis = s5_scan_get(scan, left.last_hit) + WIDTH_RAY_TOLERANCE_MM <
+                        face_ray_range(left.last_hit, depth) &&
+                        s5_scan_get(scan, right.last_hit) + WIDTH_RAY_TOLERANCE_MM <
+                        face_ray_range(right.last_hit, depth),
+        };
     }
     unsigned left_extent, right_extent;
     bool left_known = width_extent_mm(scan, left, depth, -1, &left_extent);
