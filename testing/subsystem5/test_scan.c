@@ -5,6 +5,7 @@
 
 static void test_echo_pairing(void)
 {
+    _Static_assert(sizeof(S5_PING) == 4, "The echo result fits in four bytes");
     S5_ECHO_CAPTURE capture = {.triggered_at = UINT32_MAX - 50};
     s5_capture_edge(&capture, UINT32_MAX - 20, true, false);
     assert(capture.state == S5_CAPTURE_IDLE);
@@ -12,7 +13,8 @@ static void test_echo_pairing(void)
     s5_capture_edge(&capture, 20, true, false);
     s5_capture_edge(&capture, 895, false, true);
     assert(capture.state == S5_CAPTURE_DONE && capture.pulse_us == 875);
-    assert(s5_classify_echo(S5_ECHO_PULSE, capture.pulse_us).range_mm == 150);
+    S5_PING measured = s5_capture_result(&capture, 895, true, false);
+    assert(measured.state == S5_ECHO_PULSE && measured.range_mm == 150);
     s5_capture_edge(&capture, 901, true, false);
     assert(capture.pulse_us == 875);
 
@@ -26,7 +28,18 @@ static void test_echo_pairing(void)
     s5_capture_edge(&capture, 120, true, false);
     s5_capture_edge(&capture, 30100, false, true);
     assert(capture.state == S5_CAPTURE_FALL); /* trailing edge arrived too late */
-    assert(s5_classify_echo(S5_ECHO_QUIET, 0).range_mm == S5_UNKNOWN_RANGE);
+    S5_PING fall = s5_capture_result(&capture, 30100, true, false);
+    assert(fall.state == S5_ECHO_FALL_TIMEOUT && fall.range_mm == S5_UNKNOWN_RANGE);
+    capture.state = S5_CAPTURE_RISE;
+    S5_PING rise = s5_capture_result(&capture, 30100, true, false);
+    assert(rise.state == S5_ECHO_QUIET && rise.range_mm == S5_UNKNOWN_RANGE);
+    assert(s5_capture_result(&capture, 30099, true, false).state == S5_ECHO_TIMING);
+    capture.state = S5_CAPTURE_IDLE;
+    S5_PING high = s5_capture_result(&capture, 100, true, true);
+    assert(high.state == S5_ECHO_HIGH && high.range_mm == S5_UNKNOWN_RANGE);
+    assert(s5_capture_result(&capture, 100, false, true).state == S5_ECHO_TIMING);
+    S5_RANGE_GATE gate = {.range_mm = measured.range_mm};
+    assert(s5_accept_range(&gate, fall.range_mm) && gate.blocked);
     assert(s5_classify_echo(S5_ECHO_PULSE, 25000).range_mm == S5_OPEN_RANGE);
 }
 
@@ -62,5 +75,5 @@ int main(void)
 {
     test_echo_pairing();
     test_scan_and_profile();
-    puts("PASS echo pairing, expiry, scan packing, off-centre targeting and profile bounds");
+    puts("PASS echo pairing, timeout diagnostics, scan packing, off-centre targeting and profile bounds");
 }

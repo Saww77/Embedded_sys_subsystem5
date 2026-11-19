@@ -2,7 +2,7 @@
 
 ## Integration
 
-The scan task owns GP16 (10 µs trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on core 1. The ISR pairs rising and falling edges against each trigger's 30 ms deadline. A missing, late or malformed echo makes that bearing unavailable. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
+The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and GP12 (50 Hz servo on PWM slice 6A). It shares GPIO IRQ13 with the encoders on core 1. The ISR pairs rising and falling edges against each trigger's 30 ms deadline. A missing, late or malformed echo makes the ping unavailable. The sweep retries after 60 ms at the same bearing. Two complete out-of-range pulses can clear the forward interlock. Some modules give no pulse or hold ECHO high past 30 ms without a target. Verify the module's open-track behavior during bring-up.
 
 1. The forward monitor caps approach targets at 20 RPM within 300 mm. At or below 150 mm the controller stops the drive, waits for the wheels to settle, then sweeps 30°, 60°, 90°, 120°, and 150°.
 2. If an obstacle lies within 200 mm, the fine scan returns to its bearing. A forward hit takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan expands in 5° steps until it brackets each edge or runs out of usable readings.
@@ -14,15 +14,17 @@ STOP, link or motor faults, stale inputs, and a failed or timed-out search stop 
 
 ## Stationary hardware check
 
-With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It holds GP12 at 90° until the ultrasonic sensor reports two consecutive valid ranges at or below 200 mm. It runs one production sweep and width calculation, then centres the servo. Remove the target or move it beyond 250 mm until the log says `Test rearmed`. USB serial at 115200 prints the detection, commanded angles, raw echoes and estimated width.
+With the Pico SDK configured, run `make -C build_make S5_BENCH=1` from the repository root and flash `build_make/mtk3pico_smp1_usb_cdc_s5bench.uf2`. This profile skips Wi-Fi, MQTT and the drive tasks. It holds GP12 at 90° until the ultrasonic sensor reports two consecutive valid ranges at or below 200 mm. It runs one production sweep and width calculation, then centres the servo. Move the target beyond 250 mm for two clear readings, or remove it for three consecutive echo timeouts, until the log says `Test rearmed`. Rearming on timeouts applies to this stationary test. USB serial at 115200 prints the detection, commanded angles, raw echoes and estimated width.
 
-For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, move a narrow flat-front box to 12–15 cm directly ahead. Place a farther reflecting surface behind it so both edge bearings have a valid return within the echo deadline. A resolved profile prints `width=… mm`. If the log says `no pulse` or `stuck high` with the target in place, check the GP16 trigger and GP17 echo signals, sensor supply and common ground. If the log reports changing servo angles while the servo stays still, check the GP12 header, plug orientation and servo supply.
+For a range check, hold a flat target 30–50 cm ahead. A working sensor reports about 1,750–2,920 µs and 300–500 mm while the servo stays centred. For a width check, keep a narrow flat-front box stationary at 12–18 cm. Use a broad, flat background about 40–60 cm from the sensor to provide valid returns beside the box. A resolved profile prints `width=… mm`.
+
+`rise timeout` means no rising edge was captured within 30 ms. `fall timeout` means the echo started and did not finish within that window. `high before trigger` means GP17 was already high at the start of the ping. If repeated with a flat target straight ahead, check GP16, level-shifted GP17, sensor supply and common ground. If the servo stays still when the commanded angle changes, check the GP12 header, plug orientation and servo supply.
 
 ## Data representation
 
 | Field | Range | Representation |
 |---|---|---|
-| Captured pulse and state | 0–29,999 µs, 5 capture states | 15 and 3 bits in ISR capture; 15 and 2 bits for the task sample and its four outcomes |
+| Captured pulse and state | 0–29,999 µs, 5 capture states and 5 echo outcomes | 15 bits for pulse duration and 3 bits for state in both ISR and task storage |
 | Trigger, rise and freshness timestamps | 0–2³² − 1 µs or ms, rolling | 32 bits each, using wrap-safe elapsed time |
 | Sweep range and closest distance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits per entry and closest-distance field; 12 bits on wire for measured distance |
 | Sweep bearing | 30°–150° in 5° steps | Implicit scan index 0–24; profile and wire store degrees minus 30 in 7 bits |
@@ -64,6 +66,8 @@ The obstacle and avoidance MQTT packets remain seven bytes and one byte respecti
 | S5-U09 | Accept a complete out-of-range pulse as sensor response evidence | Passed on host |
 | S5-I07 | Exercise GP12 pulse selection and GP16 trigger with high ECHO using modeled RP2040 registers | Passed on host |
 | S5-I08 | Wait for two near echoes before sweeping, report width, and rearm only after two clear echoes | Passed with simulated bench input |
+| S5-U10 | Distinguish pre-trigger high from missing rising or falling edges | Passed on host with the range interlock check |
+| S5-I09 | Retry a missed fine-scan echo at 90° and rearm after three echo timeouts | Passed with simulated bench input. The retry produced a 28 mm profile from scripted returns. |
 
 Run the controller and planner test from the repository root:
 

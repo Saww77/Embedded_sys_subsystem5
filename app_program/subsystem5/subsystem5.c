@@ -12,7 +12,13 @@
 #define RANGE_LOG_INTERVAL_MS 2000u
 
 static unsigned servo_angle = S5_CENTRE_ANGLE;
-static const char *const echo_status[] = {"no pulse", "pulse", "stuck high", "timing fault"};
+static const char *const echo_status[] = {
+    [S5_ECHO_QUIET] = "rise timeout",
+    [S5_ECHO_PULSE] = "pulse",
+    [S5_ECHO_HIGH] = "high before trigger",
+    [S5_ECHO_TIMING] = "timing fault",
+    [S5_ECHO_FALL_TIMEOUT] = "fall timeout",
+};
 
 static void aim(unsigned angle)
 {
@@ -36,14 +42,21 @@ static void log_ping(const char *tag, const char *context, unsigned angle, S5_PI
 static unsigned read_at(unsigned index, BOOL verbose)
 {
     aim(S5_MIN_ANGLE + index * S5_FINE_STEP);
-    S5_PING ping = s5_hw_ping();
-    if (verbose) log_ping("[S5 BENCH]", "scan", servo_angle, ping);
-    if (ping.range_mm == S5_OPEN_RANGE) {
-        tk_dly_tsk(PING_INTERVAL_MS);
-        ping = s5_hw_ping();
-        if (verbose) log_ping("[S5 BENCH]", "recheck", servo_angle, ping);
+    bool previous_open = false;
+    for (unsigned attempt = 0; attempt < 3u; ++attempt) {
+        if (attempt) tk_dly_tsk(PING_INTERVAL_MS);
+        S5_PING ping = s5_hw_ping();
+        if (verbose) log_ping("[S5 BENCH]", attempt ? "recheck" : "scan", servo_angle, ping);
+        if (s5_range_measured(ping.range_mm)) return ping.range_mm;
+        /* Retry one missing return. A third ping is only needed to confirm open range. */
+        if (ping.range_mm == S5_OPEN_RANGE) {
+            if (previous_open) return S5_OPEN_RANGE;
+            previous_open = true;
+        } else if (attempt) {
+            break;
+        }
     }
-    return ping.range_mm;
+    return S5_UNKNOWN_RANGE;
 }
 
 static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *request)
@@ -71,8 +84,14 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     }
 
     unsigned coarse = s5_scan_get(&samples, anchor);
+    if (verbose)
+        tm_printf((UB*)"%s fine scan starting at %u deg\n", tag, S5_MIN_ANGLE + anchor * S5_FINE_STEP);
     unsigned fine = read_at(anchor, verbose);
-    if (!s5_same_obstacle(fine, coarse) || fine > S5_CLEAR_MM) goto cancelled;
+    if (!s5_same_obstacle(fine, coarse) || fine > S5_CLEAR_MM) {
+        tm_printf((UB*)"%s fine scan could not confirm the %u mm target at %u deg\n",
+                  tag, coarse, servo_angle);
+        goto cancelled;
+    }
     s5_scan_set(&samples, anchor, fine);
 
     /* Walk outward at 5-degree resolution until each edge is bracketed. */
@@ -162,14 +181,16 @@ static void scan_task(INT stacd, void *exinf)
 #define BENCH_PING_MS 350
 #define BENCH_RELEASE_MM 250u
 #define BENCH_CONFIRMATIONS 2u
+#define BENCH_TIMEOUT_CONFIRMATIONS 3u
 
 static unsigned bench_wait_for_echo(BOOL want_target)
 {
     unsigned confirmed = 0;
+    unsigned timeouts = 0;
     for (;;) {
         tk_dly_tsk(BENCH_PING_MS);
         S5_PING ping = s5_hw_ping();
-        log_ping("[S5 BENCH]", want_target ? "waiting for target" : "waiting for clear",
+        log_ping("[S5 BENCH]", want_target ? "waiting for target" : "waiting to rearm",
                  S5_CENTRE_ANGLE, ping);
 
         unsigned range = ping.range_mm;
@@ -178,6 +199,13 @@ static unsigned bench_wait_for_echo(BOOL want_target)
                        range == S5_OPEN_RANGE || (measured && range > BENCH_RELEASE_MM);
         confirmed = matches ? confirmed + 1u : 0u;
         if (confirmed == BENCH_CONFIRMATIONS) return range;
+        /* In this motor-off test a missing target can restart the detector. */
+        bool timed_out = ping.state == S5_ECHO_QUIET || ping.state == S5_ECHO_FALL_TIMEOUT;
+        timeouts = !want_target && timed_out ? timeouts + 1u : 0u;
+        if (timeouts == BENCH_TIMEOUT_CONFIRMATIONS) {
+            tm_printf((UB*)"[S5 BENCH] Three echo timeouts. Restarting target detection.\n");
+            return S5_UNKNOWN_RANGE;
+        }
     }
 }
 

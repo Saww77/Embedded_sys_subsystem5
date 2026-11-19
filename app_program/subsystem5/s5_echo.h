@@ -34,4 +34,19 @@ static inline void s5_capture_edge(volatile S5_ECHO_CAPTURE *capture, uint32_t n
     }
 }
 
+static inline S5_PING s5_capture_result(const S5_ECHO_CAPTURE *capture, uint32_t now,
+                                       bool triggered, bool idle_high)
+{
+    if (triggered) {
+        if (idle_high) return s5_classify_echo(S5_ECHO_HIGH, 0);
+        if (capture->state == S5_CAPTURE_DONE)
+            return s5_classify_echo(S5_ECHO_PULSE, capture->pulse_us);
+        if (now - capture->triggered_at >= S5_ECHO_TIMEOUT_US) {
+            if (capture->state == S5_CAPTURE_RISE) return s5_classify_echo(S5_ECHO_QUIET, 0);
+            if (capture->state == S5_CAPTURE_FALL) return s5_classify_echo(S5_ECHO_FALL_TIMEOUT, 0);
+        }
+    }
+    return s5_classify_echo(S5_ECHO_TIMING, 0);
+}
+
 #endif

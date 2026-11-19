@@ -45,7 +45,7 @@ EXPORT void subsystem5_test(void)
     TEST_CHECK("S5-U07", s5_classify_echo(S5_ECHO_QUIET, 0).range_mm == S5_UNKNOWN_RANGE &&
                s5_classify_echo(S5_ECHO_PULSE, 2).range_mm == S5_UNKNOWN_RANGE &&
                s5_classify_echo(S5_ECHO_HIGH, 0).range_mm == S5_UNKNOWN_RANGE,
-               "silence, short pulses and stuck-high echo leave range unknown");
+               "silence, short pulses and pre-trigger high leave range unknown");
     S5_PING target = s5_classify_echo(S5_ECHO_PULSE, 2300);
     TEST_CHECK("S5-U08", target.range_mm == 394 && target.pulse_us == 2300 &&
                s5_classify_echo(S5_ECHO_QUIET, 0).range_mm == S5_UNKNOWN_RANGE &&

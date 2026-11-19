@@ -19,7 +19,7 @@
 #define ECHO_INTR REG32(IO_BANK0_BASE + 0xf0u + ECHO_BANK_OFFSET)
 #define ECHO_ENABLE REG32(echo_irq_base)
 #define ECHO_PENDING REG32(echo_irq_base + 0x20u)
-#define TRIGGER_US 10u
+#define TRIGGER_MIN_US 10u
 #define MICROS REG32(TIMER_TIMERAWL)
 #define STARTUP_POLLS 32768u
 #define TRIGGER_POLLS 4096u
@@ -104,15 +104,18 @@ S5_PING s5_hw_ping(void)
     if (!echo_irq_base) return s5_classify_echo(S5_ECHO_TIMING, 0);
     UW saved;
     DI(saved);
+    bool idle_high = echo_high();
     gpio_set_val(TRIG_PIN, 1);
     uint32_t trigger_at = MICROS;
     unsigned polls = 0;
-    while (MICROS - trigger_at < TRIGGER_US && ++polls < TRIGGER_POLLS) {}
-    bool idle_high = echo_high();
+    /* Wait past the minimum to allow for sampling between timer ticks. */
+    while (MICROS - trigger_at <= TRIGGER_MIN_US && ++polls < TRIGGER_POLLS) {}
     ECHO_INTR = ECHO_EDGES;
     capture.triggered_at = MICROS;
     bool triggered = polls < TRIGGER_POLLS;
-    capture.state = triggered && !idle_high ? S5_CAPTURE_RISE : S5_CAPTURE_IDLE;
+    capture.state = S5_CAPTURE_IDLE;
+    if (triggered && !idle_high)
+        capture.state = echo_high() ? S5_CAPTURE_BAD : S5_CAPTURE_RISE;
     if (capture.state == S5_CAPTURE_RISE) ECHO_ENABLE |= ECHO_EDGES;
     gpio_set_val(TRIG_PIN, 0);
     EI(saved);
@@ -126,13 +129,10 @@ S5_PING s5_hw_ping(void)
     DI(saved);
     ECHO_ENABLE &= ~ECHO_EDGES;
     ECHO_INTR = ECHO_EDGES;
-    unsigned state = capture.state;
-    unsigned pulse = state == S5_CAPTURE_DONE ? capture.pulse_us : 0;
+    const S5_ECHO_CAPTURE sample = capture;
+    uint32_t finished_at = MICROS;
     capture.state = S5_CAPTURE_IDLE;
     EI(saved);
-    S5_ECHO_STATE result = !triggered || state == S5_CAPTURE_BAD ? S5_ECHO_TIMING :
-                           state == S5_CAPTURE_DONE ? S5_ECHO_PULSE :
-                           idle_high || state == S5_CAPTURE_FALL ? S5_ECHO_HIGH : S5_ECHO_QUIET;
-    return s5_classify_echo(result, pulse);
+    return s5_capture_result(&sample, finished_at, triggered, idle_high);
 }
 #endif

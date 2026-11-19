@@ -30,13 +30,13 @@ static inline unsigned s5_range_from_echo(unsigned pulse_us)
 }
 
 typedef enum {
-    S5_ECHO_QUIET, S5_ECHO_PULSE, S5_ECHO_HIGH, S5_ECHO_TIMING
+    S5_ECHO_QUIET, S5_ECHO_PULSE, S5_ECHO_HIGH, S5_ECHO_TIMING, S5_ECHO_FALL_TIMEOUT
 } S5_ECHO_STATE;
 
 typedef struct {
     unsigned pulse_us:15;
     unsigned range_mm:12;
-    unsigned state:2;
+    unsigned state:3;
 } S5_PING;
 
 static inline S5_PING s5_classify_echo(S5_ECHO_STATE state, unsigned pulse_us)
