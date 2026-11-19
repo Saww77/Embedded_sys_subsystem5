@@ -274,6 +274,10 @@ endif
 ################################################################################
 #PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)
 PROFILE_ID := smp$(SMP)-$(CONSOLE)-wifi$(WIFI)-net$(NET)-mqtt$(MQTT)-crash$(CRASH_REPORT)-test$(TEST)-b1demo$(BUDDY1_DEMO)-s5bench$(S5_BENCH)-s5sensor$(S5_SENSOR_TEST)-s4$(S4_ENABLED)
+# First adding or removing the optional header also invalidates old objects.
+ifneq ($(wildcard ../config/s5_servo_calibration.h),)
+PROFILE_ID := $(PROFILE_ID)-s5calibrated
+endif
 PROFILE_FILE := .build_profile
 
 ifneq ($(strip $(shell cat $(PROFILE_FILE) 2>/dev/null)),$(PROFILE_ID))

@@ -30,6 +30,9 @@ AVOIDANCE_FAILURES = (
     'Stopped by operator request',
     'A vehicle safety interlock stopped the detour',
     'The detour phase timed out',
+    'A near echo persisted at the left sweep limit',
+    'A near echo persisted at the right sweep limit',
+    'Near echoes persisted at both sweep limits',
 )
 
 def command_payload(command):

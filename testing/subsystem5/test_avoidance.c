@@ -259,6 +259,36 @@ static void test_stationary_retry(void)
     start_move(&model, &in, &out, S5_PIVOT_LEFT, 0);
 }
 
+static void test_clipped_scan(bool can_retrace)
+{
+    VC_MODEL model = {0};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    in.avoidance.line_centered = true;
+    in.avoidance.can_retrace = can_retrace;
+    S5_PROFILE scan = obstacle(true);
+    scan.width_mm = S5_UNKNOWN_WIDTH;
+    scan.left_edge_valid = false;
+    scan.left_clipped = true;
+    scan.left_path_mm = 234;
+    scan.right_path_mm = 230;
+    profile(&model, &in, &out, scan);
+    if (!can_retrace) {
+        assert(out.stop && model.avoidance.phase == S5_FAILED);
+        assert(model.avoidance.failure == S5_FAIL_LEFT_LIMIT);
+        return;
+    }
+    assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_BACK_UP);
+    start_move(&model, &in, &out, S5_REVERSE, S5_REVERSE_MM);
+    end_move(&model, &in, &out);
+    assert(model.avoidance.phase == S5_PROFILE_PATH);
+    in.avoidance.range_mm += S5_REVERSE_MM;
+    in.avoidance.profile_at = in.avoidance.now + 2000;
+    step(&model, &in, &out, 2000);
+    assert(out.stop && model.avoidance.phase == S5_FAILED);
+    assert(model.avoidance.failure == S5_FAIL_LEFT_LIMIT);
+}
+
 static void test_departure_room_after_retrace(void)
 {
     S5_AVOID state = {.phase = S5_PROFILE_PATH, .phase_at = 100,
@@ -324,6 +354,8 @@ int main(void)
     test_reentry_limit();
     test_width_and_diagonal_clearance();
     test_stationary_retry();
+    test_clipped_scan(false);
+    test_clipped_scan(true);
     test_departure_room_after_retrace();
     test_reverse_and_rescan(true);
     test_reverse_and_rescan(false);

@@ -2,24 +2,29 @@
 #define S5_PROFILE_H
 
 #include "s5_range.h"
+#include "s5_servo_config.h"
 #include <stdint.h>
 
-#define S5_MIN_ANGLE 30u
-#define S5_CENTRE_ANGLE 90u
-#define S5_MAX_ANGLE 150u
 #define S5_FINE_STEP 5u
-#define S5_SCAN_POINTS 25u
+#define S5_SCAN_POINTS ((S5_SCAN_MAX_ANGLE - S5_SCAN_MIN_ANGLE) / S5_FINE_STEP + 1u)
 #define S5_COARSE_STEP 6u
-#define S5_CENTRE_INDEX ((S5_CENTRE_ANGLE - S5_MIN_ANGLE) / S5_FINE_STEP)
+#define S5_COARSE_FIRST ((S5_SCAN_MAX_ANGLE - S5_MAX_ANGLE) / S5_FINE_STEP)
+#define S5_COARSE_LAST ((S5_SCAN_MAX_ANGLE - S5_MIN_ANGLE) / S5_FINE_STEP)
+#define S5_CENTRE_INDEX ((S5_SCAN_MAX_ANGLE - S5_CENTRE_ANGLE) / S5_FINE_STEP)
 #define S5_NO_TARGET S5_SCAN_POINTS
 #define S5_UNKNOWN_WIDTH 2047u
 #define S5_MAX_PROJECTED_FRONT_MM 511u
 #define S5_PROFILE_TOLERANCE_MM 100u
 
-/* Scan offsets increase from the robot's left to its right. */
+/* The reported offset uses the standard sweep so the wire format stays fixed. */
 static inline unsigned s5_servo_angle(unsigned scan_offset_deg)
 {
     return S5_MAX_ANGLE - scan_offset_deg;
+}
+
+static inline unsigned s5_scan_bearing(unsigned index)
+{
+    return S5_SCAN_MAX_ANGLE - index * S5_FINE_STEP;
 }
 
 typedef enum {
@@ -37,13 +42,15 @@ typedef struct {
     unsigned left_path_mm : 12;
     unsigned right_path_mm : 12;
     unsigned width_status : 3;
+    unsigned left_clipped : 1;
+    unsigned right_clipped : 1;
     signed left_edge_mm : 13; /* Outer sweep bounds used by the motion planner. */
     signed right_edge_mm : 13;
     unsigned left_edge_valid : 1;
     unsigned right_edge_valid : 1;
 } S5_PROFILE;
 
-/* Index zero commands 150 degrees (left), decreasing in 5-degree increments toward the right. */
+/* Index zero is the configured left endpoint, decreasing 5 degrees per sample. */
 typedef struct {
     uint8_t bytes[(S5_SCAN_POINTS * 12u + 7u) / 8u];
 } S5_SCAN;

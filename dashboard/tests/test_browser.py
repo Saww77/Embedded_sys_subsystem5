@@ -210,7 +210,7 @@ def main():
             scan = (208 | (2047 << 12) | (4094 << 23) | (4095 << 35) |
                     (60 << 47) | (1 << 54)).to_bytes(7, "little")
             fixture.publish(root + "/obstacle", scan).wait_for_publish(timeout=5)
-            fixture.publish(root + "/avoidance", b"\x0c\x13" + (606).to_bytes(2, "little")).wait_for_publish(timeout=5)
+            fixture.publish(root + "/avoidance", b"\x0c\x1d" + (606).to_bytes(2, "little")).wait_for_publish(timeout=5)
             stopped_diag = bytearray(31)
             stopped_diag[:5] = bytes((2, 0, 1, 8, 1 | 2 | 64))
             fixture.publish(root + "/motion", motion_packet()).wait_for_publish(timeout=5)
@@ -219,7 +219,7 @@ def main():
             expect(page.locator("#obstacle-nearest")).to_have_text("208 mm")
             expect(page.locator("#obstacle-width")).to_have_text("Unconfirmed")
             expect(page.locator("#obstacle-forward")).to_have_text("606 mm")
-            expect(page.locator("#avoidance-failure")).to_contain_text("could not confirm both edges")
+            expect(page.locator("#avoidance-failure")).to_contain_text("left sweep limit")
             expect(page.locator("#reset")).to_be_enabled()
             page.locator("#reset").click()
             expect(page.locator("#start")).to_be_enabled()

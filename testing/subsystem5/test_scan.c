@@ -202,6 +202,26 @@ static void test_narrow_face_at_track_distance(void)
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_RIGHT_EDGE);
 }
 
+static void test_track_left_limit(void)
+{
+    const unsigned sweep[][25] = {
+        {240, 249, 240, 227, 228, 234, 230, 228, 229, 229, 228, 227, 220,
+         218, 221, 220, 222, 221, 218, 222, 230, 231, 234, 235, 925},
+        {245, 249, 240, 232, 225, 228, 230, 230, 222, 225, 228, 228, 219,
+         218, 221, 221, 221, 226, 229, 229, 230, 230, 240, 232, 942},
+    };
+    for (unsigned pass = 0; pass < sizeof(sweep) / sizeof(*sweep); ++pass) {
+        S5_SCAN scan = {0};
+        for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&scan, i, sweep[pass][i]);
+        assert(s5_scan_target(&scan) == S5_CENTRE_INDEX);
+        S5_PROFILE profile = s5_profile(&scan, 0, S5_SCAN_POINTS - 1, S5_CENTRE_INDEX, NULL);
+        assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_LEFT_EDGE);
+        assert(profile.left_clipped && !profile.right_clipped);
+        assert(!profile.left_edge_valid && profile.right_edge_valid);
+        assert(profile.nearest_mm == 218 && profile.right_mm == sweep[pass][24]);
+    }
+}
+
 int main(void)
 {
     test_echo_pairing();
@@ -212,5 +232,6 @@ int main(void)
     test_box_width_from_ray_brackets();
     test_box_width_with_wide_beam();
     test_narrow_face_at_track_distance();
-    puts("PASS echo capture, scan packing, broad echoes, dropouts, and narrow-face width");
+    test_track_left_limit();
+    puts("PASS echo capture, scan packing, dropouts, narrow-face width and track sweep limits");
 }

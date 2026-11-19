@@ -11,9 +11,13 @@
 
 _Static_assert(S5_CLEAR_MM <= S5_MAX_PROJECTED_FRONT_MM, "Front projection must cover the obstacle window");
 
-/* sin and cos for 0..60 degrees in steps of 5 degrees, scaled by 1024. */
-static const unsigned short sine[] = {0, 89, 178, 265, 350, 433, 512, 587, 658, 724, 784, 839, 887};
-static const unsigned short cosine[] = {1024, 1020, 1008, 989, 962, 928, 886, 838, 784, 724, 658, 587, 512};
+/* sin and cos for 0..75 degrees in steps of 5 degrees, scaled by 1024. */
+static const unsigned short sine[] = {
+    0, 89, 178, 265, 350, 433, 512, 587, 658, 724, 784, 839, 887, 928, 962, 989,
+};
+static const unsigned short cosine[] = {
+    1024, 1020, 1008, 989, 962, 928, 886, 838, 784, 724, 658, 587, 512, 433, 350, 265,
+};
 
 static unsigned angle_steps(unsigned index)
 {
@@ -63,7 +67,7 @@ unsigned s5_scan_target(const S5_SCAN *scan)
     if (s5_scan_get(scan, S5_CENTRE_INDEX) <= S5_CLEAR_MM) return S5_CENTRE_INDEX;
     unsigned target = S5_NO_TARGET;
     unsigned closest = S5_CLEAR_MM + 1;
-    for (unsigned i = 0; i < S5_SCAN_POINTS; i += S5_COARSE_STEP) {
+    for (unsigned i = S5_COARSE_FIRST; i <= S5_COARSE_LAST; i += S5_COARSE_STEP) {
         unsigned range = s5_scan_get(scan, i);
         if (range < closest) {
             target = i;
@@ -221,18 +225,24 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     for (unsigned i = left.last_hit; i <= right.last_hit; ++i) {
         unsigned range = s5_scan_get(scan, i);
         if (!s5_same_obstacle(range, reference)) continue;
-        if (range < s5_scan_get(scan, near)) near = i;
+        /* The legacy telemetry angle field represents the standard bearings. */
+        unsigned bearing = s5_scan_bearing(i);
+        if (bearing >= S5_MIN_ANGLE && bearing <= S5_MAX_ANGLE && range < s5_scan_get(scan, near))
+            near = i;
         unsigned forward = project_forward_mm(i, range);
         if (forward < front) front = forward;
     }
     S5_PROFILE result = {
-        .nearest_mm = s5_scan_get(scan, near), .angle_offset_deg = near * S5_FINE_STEP,
+        .nearest_mm = s5_scan_get(scan, near),
+        .angle_offset_deg = S5_MAX_ANGLE - s5_scan_bearing(near),
         .front_mm = front < S5_MAX_PROJECTED_FRONT_MM ? front : S5_MAX_PROJECTED_FRONT_MM,
         .width_mm = S5_UNKNOWN_WIDTH,
         .left_mm = left.clearance,
         .right_mm = right.clearance,
         .left_path_mm = S5_UNKNOWN_RANGE,
         .right_path_mm = S5_UNKNOWN_RANGE,
+        .left_clipped = left.last_hit == 0,
+        .right_clipped = right.last_hit == S5_SCAN_POINTS - 1,
     };
     /* Project the background bearing onto the depth of the adjacent obstacle face. */
     if (s5_range_available(left.clearance) && left.last_hit - left.boundary <= MAX_EDGE_BRACKET_STEPS) {

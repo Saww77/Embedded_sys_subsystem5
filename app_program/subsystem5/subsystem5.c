@@ -82,7 +82,7 @@ static void log_ping(const char *tag, const char *context, unsigned angle, S5_PI
 
 static unsigned read_at(unsigned index, BOOL verbose, bool fine)
 {
-    aim(s5_servo_angle(index * S5_FINE_STEP));
+    aim(s5_scan_bearing(index));
     unsigned previous = S5_UNKNOWN_RANGE;
     const unsigned attempts = fine ? 5u : 3u;
     for (unsigned attempt = 0; attempt < attempts; ++attempt) {
@@ -142,7 +142,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     tm_printf((UB*)"%s confirming forward target before GP12 coarse sweep\n", tag);
     unsigned centre = read_at(S5_CENTRE_INDEX, verbose, true);
     s5_scan_set(&samples, S5_CENTRE_INDEX, centre);
-    for (unsigned i = 0; i < S5_SCAN_POINTS; i += S5_COARSE_STEP) {
+    for (unsigned i = S5_COARSE_FIRST; i <= S5_COARSE_LAST; i += S5_COARSE_STEP) {
         if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
         if (i == S5_CENTRE_INDEX && s5_range_available(centre)) continue;
         s5_scan_set(&samples, i, read_at(i, verbose, false));
@@ -154,7 +154,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
         unsigned forward = s5_hw_ping().range_mm;
         if (request) vehicle_submit_obstacle_range(forward);
         /* A missing echo on any coarse bearing leaves that sector unresolved. */
-        for (unsigned i = 0; i < S5_SCAN_POINTS; i += S5_COARSE_STEP)
+        for (unsigned i = S5_COARSE_FIRST; i <= S5_COARSE_LAST; i += S5_COARSE_STEP)
             if (!s5_range_available(s5_scan_get(&samples, i))) return FALSE;
         if (!s5_range_available(forward) || forward <= S5_CLEAR_MM) return FALSE;
         *profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
@@ -164,7 +164,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
 
     unsigned coarse = s5_scan_get(&samples, anchor);
     if (verbose)
-        tm_printf((UB*)"%s fine scan starting at %u deg\n", tag, s5_servo_angle(anchor * S5_FINE_STEP));
+        tm_printf((UB*)"%s fine scan starting at %u deg\n", tag, s5_scan_bearing(anchor));
     unsigned fine = anchor == S5_CENTRE_INDEX && s5_range_available(centre) ?
                     centre : read_at(anchor, verbose, true);
     if (!s5_same_obstacle(fine, coarse) || fine > S5_CLEAR_MM) {
@@ -192,10 +192,17 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
         tm_printf((UB*)"%s width=unavailable reason=%s centre=%u mm nearest_distance=%u mm\n",
                   tag, width_status[profile->width_status], s5_scan_get(&samples, S5_CENTRE_INDEX),
                   (unsigned)profile->nearest_mm);
+        if (profile->left_clipped)
+            tm_printf((UB*)"%s left sweep limit: near return %u mm at %u deg (PWM %u us)\n",
+                      tag, s5_scan_get(&samples, 0), S5_SCAN_MAX_ANGLE, s5_servo_pulse_us(S5_SCAN_MAX_ANGLE));
+        if (profile->right_clipped)
+            tm_printf((UB*)"%s right sweep limit: near return %u mm at %u deg (PWM %u us)\n",
+                      tag, s5_scan_get(&samples, S5_SCAN_POINTS - 1), S5_SCAN_MIN_ANGLE,
+                      s5_servo_pulse_us(S5_SCAN_MIN_ANGLE));
         if (!verbose) {
             for (unsigned i = first; i <= last; ++i)
                 tm_printf((UB*)"[S5] width echo angle=%u deg range=%u mm\n",
-                          s5_servo_angle(i * S5_FINE_STEP), s5_scan_get(&samples, i));
+                          s5_scan_bearing(i), s5_scan_get(&samples, i));
         }
         if (verbose) {
             if (observed_span > 0)
@@ -346,12 +353,23 @@ EXPORT void subsystem5_bench(void)
 
     /* The servo has no position feedback. Make the commanded movement easy to
        verify before trusting the bearings in the scan log. */
-    const unsigned check_angles[] = {S5_MIN_ANGLE, S5_MAX_ANGLE, S5_CENTRE_ANGLE};
+    const unsigned check_angles[] = {
+#ifdef S5_SERVO_RIGHT_OUTER_US
+        S5_SCAN_MIN_ANGLE,
+#endif
+        S5_MIN_ANGLE, 45u, 135u, S5_MAX_ANGLE,
+#ifdef S5_SERVO_LEFT_OUTER_US
+        S5_SCAN_MAX_ANGLE,
+#endif
+        S5_CENTRE_ANGLE,
+    };
+    tm_printf((UB*)"[S5 BENCH] Keep the box out of the sweep for the startup background check.\n");
     for (unsigned i = 0; i < sizeof(check_angles) / sizeof(check_angles[0]); ++i) {
         tm_printf((UB*)"[S5 BENCH] Servo check: watch sensor turn to %u deg (PWM %u us).\n",
                   check_angles[i], s5_servo_pulse_us(check_angles[i]));
         aim(check_angles[i]);
         tk_dly_tsk(1000);
+        log_ping("[S5 BENCH]", "background check", check_angles[i], s5_hw_ping());
     }
 
     for (;;) {

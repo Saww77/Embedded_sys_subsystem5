@@ -155,8 +155,31 @@ bool s5_hw_init(void)
 unsigned s5_servo_pulse_us(unsigned angle)
 {
     _Static_assert(S5_SERVO_RIGHT_US < S5_SERVO_CENTRE_US &&
-                   S5_SERVO_CENTRE_US < S5_SERVO_LEFT_US,
-                   "Servo pulses must increase from right through centre to left");
+                   S5_SERVO_CENTRE_US < S5_SERVO_LEFT_US &&
+                   S5_SERVO_RIGHT_US > 0u && S5_SERVO_LEFT_US < 20000u,
+                   "Servo pulses must increase from right through centre to left within one PWM period");
+#ifdef S5_SERVO_RIGHT_OUTER_US
+    _Static_assert(S5_SERVO_RIGHT_OUTER_US > 0u && S5_SERVO_RIGHT_OUTER_US < S5_SERVO_RIGHT_US,
+                   "The calibrated 15-degree pulse must precede the 30-degree pulse");
+    if (angle <= S5_SCAN_MIN_ANGLE) return S5_SERVO_RIGHT_OUTER_US;
+    if (angle < S5_MIN_ANGLE) {
+        const unsigned travel = S5_MIN_ANGLE - S5_SCAN_MIN_ANGLE;
+        return S5_SERVO_RIGHT_OUTER_US +
+               ((angle - S5_SCAN_MIN_ANGLE) * (S5_SERVO_RIGHT_US - S5_SERVO_RIGHT_OUTER_US) +
+                travel / 2u) / travel;
+    }
+#endif
+#ifdef S5_SERVO_LEFT_OUTER_US
+    _Static_assert(S5_SERVO_LEFT_OUTER_US > S5_SERVO_LEFT_US && S5_SERVO_LEFT_OUTER_US < 20000u,
+                   "The calibrated 165-degree pulse must follow the 150-degree pulse within one PWM period");
+    if (angle >= S5_SCAN_MAX_ANGLE) return S5_SERVO_LEFT_OUTER_US;
+    if (angle > S5_MAX_ANGLE) {
+        const unsigned travel = S5_SCAN_MAX_ANGLE - S5_MAX_ANGLE;
+        return S5_SERVO_LEFT_US +
+               ((angle - S5_MAX_ANGLE) * (S5_SERVO_LEFT_OUTER_US - S5_SERVO_LEFT_US) +
+                travel / 2u) / travel;
+    }
+#endif
     if (angle <= S5_MIN_ANGLE) return S5_SERVO_RIGHT_US;
     if (angle >= S5_MAX_ANGLE) return S5_SERVO_LEFT_US;
 

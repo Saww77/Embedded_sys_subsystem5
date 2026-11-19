@@ -77,8 +77,12 @@ S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned 
 
     *failure = S5_FAIL_WIDTH;
     if (!profile->left_edge_valid || !profile->right_edge_valid ||
-        !profile->width_mm || profile->width_mm == S5_UNKNOWN_WIDTH)
+        !profile->width_mm || profile->width_mm == S5_UNKNOWN_WIDTH) {
+        if (profile->left_clipped && profile->right_clipped) *failure = S5_FAIL_BOTH_LIMITS;
+        else if (profile->left_clipped) *failure = S5_FAIL_LEFT_LIMIT;
+        else if (profile->right_clipped) *failure = S5_FAIL_RIGHT_LIMIT;
         return S5_NO_SIDE;
+    }
 
     unsigned left_offset = BODY_MARGIN_MM + (profile->left_edge_mm < 0 ? -profile->left_edge_mm : 0);
     unsigned right_offset = BODY_MARGIN_MM + (profile->right_edge_mm > 0 ? profile->right_edge_mm : 0);
@@ -144,7 +148,12 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
             go(state, S5_PROFILE_PATH, in->now);
             return (S5_AVOID_OUTPUT){.action = S5_RESCAN};
         }
-        if (state->reverse_available && in->line_centered && !in->line_junction) {
+        bool clipped = reason >= S5_FAIL_LEFT_LIMIT;
+        /* Change vantage point only if the tracked segment permits retracing and
+           a clipped target should still be in profiling range after the move. */
+        bool retrace_in_range = range_fresh && in->range_mm <= S5_CLEAR_MM - S5_REVERSE_MM;
+        if (state->reverse_available && in->line_centered && !in->line_junction &&
+            (!clipped || retrace_in_range)) {
             state->reverse_available = false;
             state->reverse_long = state->reverse_long && reason == S5_FAIL_ROOM &&
                                   profile.front_mm <= S5_CLEAR_MM - S5_LONG_REVERSE_MM &&

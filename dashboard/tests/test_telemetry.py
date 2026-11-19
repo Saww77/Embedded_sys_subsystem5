@@ -152,7 +152,10 @@ class TelemetryTests(unittest.TestCase):
         packet = bytearray(31)
         packet[0:5] = bytes((2, 5, 6, 8, 1 | 2 | 64))
         self.send('controller', packet)
-        self.send('avoidance', b'\x0c\x13' + (606).to_bytes(2, 'little'))
+        self.send('avoidance', b'\x0c\x1d' + (219).to_bytes(2, 'little'))
+        detour = self.d.snapshot()['telemetry']['avoidance']['data']
+        self.assertEqual(detour['failure'], 'A near echo persisted at the left sweep limit')
+        self.assertEqual(detour['forward_mm'], 219)
         self.assertTrue(self.d.snapshot()['reset_allowed'])
         self.send('motion', motion_packet())
         # Only the Pico decides whether the wheels have stopped during Reset.
