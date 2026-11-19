@@ -9,14 +9,16 @@ EXPORT void subsystem5_test(void)
     TEST_INIT();
     S5_SCAN samples = {0};
     for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&samples, i, S5_UNKNOWN_RANGE);
-    s5_scan_set(&samples, 10, 410);
-    s5_scan_set(&samples, 11, 150);
-    s5_scan_set(&samples, 12, 140);
-    s5_scan_set(&samples, 13, 150);
-    s5_scan_set(&samples, 14, S5_OPEN_RANGE);
+    const unsigned face_ranges[] = {200, 201, 203, 207};
+    for (unsigned i = 0; i < sizeof(face_ranges) / sizeof(*face_ranges); ++i) {
+        s5_scan_set(&samples, S5_CENTRE_INDEX - i, face_ranges[i]);
+        s5_scan_set(&samples, S5_CENTRE_INDEX + i, face_ranges[i]);
+    }
+    s5_scan_set(&samples, 8, 410);
+    s5_scan_set(&samples, 16, S5_OPEN_RANGE);
     S5_PROFILE profile = s5_profile(&samples, 7, 17, 12, 0);
-    TEST_CHECK("S5-U01", profile.nearest_mm == 140 && profile.angle_offset_deg == 60 &&
-               profile.width_mm == 40 && profile.left_mm == 410 &&
+    TEST_CHECK("S5-U01", profile.nearest_mm == 200 && profile.angle_offset_deg == 60 &&
+               profile.width_mm == 128 && profile.left_mm == 410 &&
                profile.right_mm == S5_OPEN_RANGE && profile.right_edge_valid,
                "profile distinguishes an open side from an electrical fault");
     profile = s5_profile(&samples, 12, 17, 12, 0);

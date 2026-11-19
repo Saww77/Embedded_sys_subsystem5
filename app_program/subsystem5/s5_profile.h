@@ -24,14 +24,14 @@ static inline unsigned s5_servo_angle(unsigned scan_offset_deg)
 
 typedef struct {
     unsigned nearest_mm : 12;
-    unsigned width_mm : 11;
+    unsigned width_mm : 11; /* Flat-face estimate from the centre and edge echoes. */
     unsigned front_mm : 9; /* Nearest longitudinal projection, capped at 511 mm. */
     unsigned left_mm : 12;
     unsigned right_mm : 12;
     unsigned angle_offset_deg : 7;
     unsigned left_path_mm : 12;
     unsigned right_path_mm : 12;
-    signed left_edge_mm : 13;
+    signed left_edge_mm : 13; /* Outer sweep bounds used by the motion planner. */
     signed right_edge_mm : 13;
     unsigned left_edge_valid : 1;
     unsigned right_edge_valid : 1;

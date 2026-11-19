@@ -90,13 +90,14 @@ static void test_scan_and_profile(void)
     s5_scan_set(&scan, 14, S5_OPEN_RANGE);
     S5_PROFILE profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.nearest_mm == 140 && s5_servo_angle(profile.angle_offset_deg) == 95);
-    assert(profile.width_mm == 39 && profile.right_mm == S5_OPEN_RANGE);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.right_mm == S5_OPEN_RANGE);
+    assert(profile.left_edge_valid && profile.right_edge_valid);
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 10, 14, 12, 0);
     assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
     s5_scan_set(&scan, 15, 550);
     profile = s5_profile(&scan, 10, 15, 12, 0);
-    assert(profile.width_mm == 45 && profile.right_mm == 550);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.right_mm == 550);
     assert(profile.right_edge_valid && profile.right_edge_mm == 40);
     s5_scan_set(&scan, 15, 30); /* A much closer return cannot bracket the far edge. */
     s5_scan_set(&scan, 16, 550); /* This is too far from the last hit to estimate width. */
@@ -133,8 +134,43 @@ static void test_repeat_and_narrow_target(void)
     s5_scan_set(&scan, 13, S5_OPEN_RANGE);
     unsigned span;
     S5_PROFILE profile = s5_profile(&scan, 11, 13, 12, &span);
-    assert(span == 0 && profile.width_mm == 27 && profile.front_mm == 300);
+    assert(span == 0 && profile.width_mm == S5_UNKNOWN_WIDTH && profile.front_mm == 300);
     assert(profile.left_edge_mm == -27 && profile.right_edge_mm == 27);
+}
+
+static void test_box_width_from_ray_brackets(void)
+{
+    S5_SCAN scan = {0};
+    /* A 220 mm face at 209 mm has edges between the 25 and 30 degree rays. */
+    const unsigned face_ranges[] = {209, 210, 212, 216, 222, 231, S5_OPEN_RANGE};
+    for (unsigned i = 0; i < sizeof(face_ranges) / sizeof(*face_ranges); ++i) {
+        s5_scan_set(&scan, S5_CENTRE_INDEX - i, face_ranges[i]);
+        s5_scan_set(&scan, S5_CENTRE_INDEX + i, face_ranges[i]);
+    }
+    S5_PROFILE profile = s5_profile(&scan, 6, 18, S5_CENTRE_INDEX, NULL);
+    assert(profile.width_mm == 220);
+}
+
+static void test_box_width_with_wide_beam(void)
+{
+    S5_SCAN scan = {0};
+    /* Synthetic 220 mm face with stable corner echoes across wide bearings.
+     * The old angular projection reports 415 mm for these same samples. */
+    const unsigned left[] = {209, 209, 209, 209, 210, 213, 219, 224, 227, 229, 229, S5_OPEN_RANGE};
+    const unsigned right[] = {209, 209, 209, 209, 210, 214, 221, 231, 240, 245, 245, 245, S5_OPEN_RANGE};
+    for (unsigned i = 0; i < sizeof(left) / sizeof(*left); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX - i, left[i]);
+    for (unsigned i = 0; i < sizeof(right) / sizeof(*right); ++i)
+        s5_scan_set(&scan, S5_CENTRE_INDEX + i, right[i]);
+    S5_PROFILE profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX, NULL);
+    assert(profile.width_mm == 220 && profile.nearest_mm == 209);
+    assert(profile.left_edge_mm == -211 && profile.right_edge_mm == 243);
+
+    /* The edges also need distance evidence. The same wide bracket with a
+       flat stream of echoes cannot identify the width. */
+    for (unsigned i = 2; i < 24; ++i) s5_scan_set(&scan, i, 209);
+    profile = s5_profile(&scan, 1, 24, S5_CENTRE_INDEX, NULL);
+    assert(profile.width_mm == S5_UNKNOWN_WIDTH);
 }
 
 int main(void)
@@ -144,5 +180,7 @@ int main(void)
     test_scan_and_profile();
     test_observed_span_without_clearance();
     test_repeat_and_narrow_target();
-    puts("PASS echo pairing, timeout diagnostics, scan packing, off-centre targeting and profile bounds");
+    test_box_width_from_ray_brackets();
+    test_box_width_with_wide_beam();
+    puts("PASS echo capture, scan packing, and 220 mm width with aimed rays and broad echoes");
 }
