@@ -43,24 +43,23 @@ static bool safe_side(unsigned clearance, unsigned offset)
            clearance >= offset + S5_MANEUVER_STOP_MM;
 }
 
-static bool choose_side(S5_AVOID *state, const S5_PROFILE *profile)
+S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned *pass_mm)
 {
     if (profile->nearest_mm < S5_TURN_CLEARANCE_MM ||
         profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM > S5_MAX_PASS_MM)
-        return false;
+        return S5_NO_SIDE;
 
     unsigned left_offset = BODY_MARGIN_MM + (profile->left_edge_mm < 0 ? -profile->left_edge_mm : 0);
     unsigned right_offset = BODY_MARGIN_MM + (profile->right_edge_mm > 0 ? profile->right_edge_mm : 0);
     bool left = profile->left_edge_valid && safe_side(profile->left_mm, left_offset);
     bool right = profile->right_edge_valid && safe_side(profile->right_mm, right_offset);
-    if (!left && !right) return false;
+    if (!left && !right) return S5_NO_SIDE;
 
     bool use_left = left && (!right || profile->left_mm > profile->right_mm ||
                             (profile->left_mm == profile->right_mm && left_offset <= right_offset));
-    state->side = use_left ? S5_LEFT : S5_RIGHT;
-    state->offset_mm = use_left ? left_offset : right_offset;
-    state->next_pass_mm = profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM;
-    return true;
+    *offset_mm = use_left ? left_offset : right_offset;
+    *pass_mm = profile->nearest_mm + FOLLOW_AHEAD_MARGIN_MM;
+    return use_left ? S5_LEFT : S5_RIGHT;
 }
 
 S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
@@ -82,7 +81,14 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
             !range_fresh) return wait;
         if (in->profile.nearest_mm == S5_OPEN_RANGE)
             return go(state, S5_CHECK_LINE, in->now);
-        if (choose_side(state, &in->profile)) return go(state, S5_TURN_OUT, in->now);
+        unsigned offset, pass;
+        S5_SIDE side = s5_plan_bypass(&in->profile, &offset, &pass);
+        if (side != S5_NO_SIDE) {
+            state->side = side;
+            state->offset_mm = offset;
+            state->next_pass_mm = pass;
+            return go(state, S5_TURN_OUT, in->now);
+        }
         if (state->reverse_available && in->line_centered && !in->line_junction) {
             state->reverse_available = false;
             return go(state, S5_BACK_UP, in->now);

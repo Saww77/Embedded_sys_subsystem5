@@ -221,6 +221,23 @@ static unsigned bench_wait_for_echo(BOOL want_target)
     }
 }
 
+static void bench_print_plan(const S5_PROFILE *profile)
+{
+    if (profile->nearest_mm == S5_OPEN_RANGE) {
+        tm_printf((UB*)"[S5 BENCH] plan=CONTINUE turn=0 deg\n");
+        return;
+    }
+
+    unsigned offset, pass;
+    S5_SIDE side = s5_plan_bypass(profile, &offset, &pass);
+    if (side == S5_NO_SIDE) {
+        tm_printf((UB*)"[S5 BENCH] plan=STOP turn=0 deg. Scan did not establish a usable bypass.\n");
+        return;
+    }
+    tm_printf((UB*)"[S5 BENCH] plan=%s turn=%u deg lateral_offset=%u mm pass=%u mm\n",
+              side == S5_LEFT ? "LEFT" : "RIGHT", S2_MANEUVER_TURN_DEG, offset, pass);
+}
+
 EXPORT void subsystem5_bench(void)
 {
     tm_printf((UB*)"[S5 BENCH] GP12 servo, GP16 trigger, GP17 echo. Drive outputs off.\n");
@@ -228,9 +245,12 @@ EXPORT void subsystem5_bench(void)
     setup();
     for (;;) {
         unsigned detected = bench_wait_for_echo(TRUE);
-        tm_printf((UB*)"[S5 BENCH] obstacle detected at %u mm. Starting width test.\n", detected);
+        tm_printf((UB*)"[S5 BENCH] obstacle detected at %u mm. Starting scan and turn planning.\n", detected);
         S5_PROFILE profile;
-        (void)scan_obstacle(&profile, TRUE, NULL);
+        if (scan_obstacle(&profile, TRUE, NULL))
+            bench_print_plan(&profile);
+        else
+            tm_printf((UB*)"[S5 BENCH] plan=STOP turn=0 deg. Profile unavailable.\n");
         tm_printf((UB*)"[S5 BENCH] Servo centred. Remove target or move it beyond %u mm to rearm.\n",
                   S5_CLEAR_MM);
         (void)bench_wait_for_echo(FALSE);

@@ -44,6 +44,7 @@ typedef struct {
     uint16_t distance_mm : 9;
 } S5_AVOID_OUTPUT;
 
+S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned *pass_mm);
 void s5_avoid_begin(S5_AVOID *state, uint32_t now);
 S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in);
 #endif
