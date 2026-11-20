@@ -87,10 +87,10 @@ Connect the scan servo to the Robo Pico servo header marked **GP12**. At power-u
 
 ## Trace obstacle width from the Pico to the dashboard
 
-Open the firmware's USB serial console at 115200 baud. The controller slows at 350 mm and stops to scan at 220 mm. The servo confirms the forward target, estimates its width from the sweep and samples the two 45° departure headings before returning to centre. If neither diagonal fits, the controller can turn sideways using the clearance seen beyond an edge and verify that heading before driving. The dashboard keeps the latest sweep until Reset or the next detour. **Forward now** shows the current straight-ahead reading separately.
+Open the firmware's USB serial console at 115200 baud. The controller slows at 350 mm and stops to scan at 220 mm. The servo confirms the forward target, halves the sweep's estimated width and samples clearance at 45° right and 135° left before returning to centre. The controller turns 90° toward the clearer usable side, choosing left on a tie. It verifies clearance in the new heading before driving. After passing the obstacle and finding the line, it repeats avoidance automatically for a new obstacle ahead. The dashboard keeps the latest sweep until Reset or the next detour. **Forward now** shows the current straight-ahead reading separately.
 
 - `confirming forward target before GP12 coarse sweep` means the scan task started the sweep.
-- `estimated_width=...` reports the observed lateral span from a partial sweep. `width=unavailable` means the sweep provided no usable width estimate. The USB serial log includes the sampled `[S5] width echo` bearings for both cases. The planner can depart on either side with verified clearance. The dashboard reports the reason and phase if the detour stops.
+- `estimated_width=...` reports half the observed lateral span from a partial sweep. `width=unavailable` means the sweep provided no usable width estimate. The USB serial log includes the sampled `[S5] width echo` bearings for both cases. The planner can depart on either side with verified clearance. The dashboard reports the reason and phase if the detour stops.
 - `[S5] profile ... width=...` confirms width was calculated on the Pico. `[S1 MQTT] /obstacle queued ... width=...` confirms the frame reached the local MQTT queue. Use the dashboard's topic root and subscribe to the broker to verify delivery. The payload is binary.
 
 ```sh

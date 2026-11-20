@@ -33,7 +33,7 @@ typedef enum {
 
 typedef struct {
     unsigned nearest_mm : 12;
-    unsigned width_mm : 11; /* Edge-to-edge estimate or observed span for an incomplete sweep. */
+    unsigned width_mm : 11; /* Half the edge-to-edge estimate or observed span. */
     unsigned front_mm : 9; /* Nearest longitudinal projection, capped at 511 mm. */
     unsigned left_mm : 12;
     unsigned right_mm : 12;

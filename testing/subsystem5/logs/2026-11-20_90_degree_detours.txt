@@ -1,0 +1,7 @@
+PASS echo capture, scan packing, partial width estimates, sweep limits and bench background replay
+PASS 90-degree detours, left tie-break, line recovery, repeat obstacle and cancellation
+PASS START, STOP, echo recovery and right pivot from a saved sweep without rescanning
+PASS 16 dashboard telemetry tests and JavaScript syntax check
+PASS Pico W mqtt mtk3pico_smp1_usb_cdc_wifi_lwip_mqtt_nos4.uf2 (738304 bytes)
+PASS Pico W bench mtk3pico_smp1_usb_cdc_s5bench.uf2 (207360 bytes)
+PASS Pico W self-test mtk3pico_smp1_usb_cdc_wifi_nos4_test.uf2 (624128 bytes)

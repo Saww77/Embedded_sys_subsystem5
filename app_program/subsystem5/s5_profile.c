@@ -189,7 +189,7 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
         .nearest_mm = s5_scan_get(scan, near),
         .angle_offset_deg = S5_MAX_ANGLE - s5_scan_bearing(near),
         .front_mm = front < S5_MAX_PROJECTED_FRONT_MM ? front : S5_MAX_PROJECTED_FRONT_MM,
-        .width_mm = span > 0 && span <= MAX_WIDTH_MM ? span : S5_UNKNOWN_WIDTH,
+        .width_mm = span > 0 && span <= MAX_WIDTH_MM ? (span + 1u) / 2u : S5_UNKNOWN_WIDTH,
         .left_edge_mm = left_hit,
         .right_edge_mm = right_hit,
         .left_mm = left.clearance,
@@ -220,7 +220,7 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     unsigned width = width_between_echoes_mm(s5_scan_get(scan, left.last_hit),
                                              s5_scan_get(scan, right.last_hit),
                                              right.last_hit - left.last_hit);
-    if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = width;
+    if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = (width + 1u) / 2u;
     else result.width_status = S5_WIDTH_UNRESOLVED;
     return result;
 }

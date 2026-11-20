@@ -68,10 +68,8 @@ bool motion_set_wheel_rpm_tracked(unsigned left, unsigned right, uint16_t *comma
 
 bool motion_clear_faults(void) { ++clear_count; return true; }
 bool motion_maneuver(unsigned mm, bool right, uint16_t *command)
-{ (void)mm; (void)right; (void)command; assert(0); return false; }
-bool motion_maneuver_turn_45(bool right, uint16_t *command)
 {
-    assert(right && !queued_command);
+    assert(!mm && right && !queued_command);
     ++right_turn_count;
     *command = queued_command = 1;
     motor_busy = true;
@@ -218,7 +216,8 @@ int main(void)
     assert(vehicle_obstacle_scan_request(&request));
 
     S5_PROFILE unresolved = {.nearest_mm = 208, .front_mm = 203, .width_mm = S5_UNKNOWN_WIDTH,
-                             .angle_offset_deg = 60, .left_path_mm = S5_UNKNOWN_RANGE,
+                             .angle_offset_deg = 60, .left_mm = S5_UNKNOWN_RANGE, .right_mm = S5_UNKNOWN_RANGE,
+                             .left_path_mm = S5_UNKNOWN_RANGE,
                              .right_path_mm = S5_UNKNOWN_RANGE};
     uint32_t first_request = request;
     clock_ms += 20;

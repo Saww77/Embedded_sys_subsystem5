@@ -20,7 +20,6 @@
 #define VC_WAKE 1u
 
 _Static_assert(S3_ADVANCE_MM > 0 && S3_ADVANCE_MM < 512u, "Axle offset must fit in 9 bits");
-_Static_assert(S5_BYPASS_TURN_DEG == S2_TURN_STEP_DEG, "Detour geometry uses one 45-degree turn step");
 _Static_assert(S5_LATERAL_TURN_DEG == S2_MANEUVER_TURN_DEG, "Lateral departure uses the 90-degree turn");
 enum { SCAN_OFF, SCAN_READY, SCAN_ACTIVE };
 static ID guard, work_event;
@@ -333,10 +332,8 @@ static void submit_output(const VC_INPUT *in, const VC_OUTPUT *out, const S2_REP
             submitted = motion_maneuver_reverse(out->maneuver.distance_mm, &drive.command);
         else if (action == S5_ADVANCE)
             submitted = motion_maneuver(out->maneuver.distance_mm, false, &drive.command);
-        else if (out->maneuver.turn_90)
-            submitted = motion_maneuver(0, action == S5_PIVOT_RIGHT, &drive.command);
         else
-            submitted = motion_maneuver_turn_45(action == S5_PIVOT_RIGHT, &drive.command);
+            submitted = motion_maneuver(0, action == S5_PIVOT_RIGHT, &drive.command);
         drive.velocity = false;
     } else {
         bool refresh = !drive.moving || in->avoidance.now - drive.refreshed >= VC_REFRESH_MS;
@@ -444,7 +441,6 @@ static TMO vehicle_service_once(void)
     unsigned side = model.avoidance.side;
     unsigned offset = model.avoidance.offset_mm;
     unsigned pass = model.avoidance.next_pass_mm;
-    bool turn_90 = model.avoidance.turn_90;
     /* Serialize dispatch with the request latch, so STOP can cancel an entire
        batch before any later movement is submitted. */
     submit_output(&in, &out, &reply, vc_core_detouring(&model));
@@ -492,8 +488,7 @@ static TMO vehicle_service_once(void)
         if (phase == S5_TURN_OUT)
             tm_printf((UB*)"[S5] bypass side=%s turn=%u deg departure=%u mm offset=%u mm pass=%u mm\n",
                       side == S5_LEFT ? "T (left)" : "R (right)",
-                      turn_90 ? S5_LATERAL_TURN_DEG : S5_BYPASS_TURN_DEG,
-                      turn_90 ? offset : s5_diagonal_mm(offset), offset, pass);
+                      S5_LATERAL_TURN_DEG, offset, offset, pass);
         if (phase == S5_FAILED)
             tm_printf((UB*)"[S5] stopped during %s, detour reason=%u vehicle reason=%u\n",
                       avoidance_phase_name[previous], failure, reason);

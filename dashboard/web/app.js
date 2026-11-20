@@ -237,7 +237,7 @@ function drawTelemetry(data) {
   text("avoidance-side", detour?.side);
   text("obstacle-forward", !avoidance?.fresh || detour?.forward_mm === undefined ? null :
     detour.forward_open ? "Open" : detour.forward_mm == null ? "No usable echo" : detour.forward_mm + " mm");
-  text("obstacle-source", obstacle?.saved_profile ? "Side clearances were measured along the 45° departure paths." :
+  text("obstacle-source", obstacle?.saved_profile ? "Clearance samples at 135° left (T) and 45° right (R)." :
     "The car stops to scan at 220 mm during a run.");
   el("avoidance-failure").hidden = !detour?.failure;
   text("avoidance-failure", detour?.failure ? `${detour.failure} · ${detour.failed_phase}` : "");

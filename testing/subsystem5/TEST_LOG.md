@@ -6,9 +6,9 @@ The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and G
 
 1. The forward monitor caps approach targets at 20 RPM within 350 mm. At or below 220 mm the controller stops the drive, waits for the wheels to settle, then sweeps 30°, 60°, 90°, 120°, and 150°.
 2. The stationary sweep confirms the centre reading first. A forward hit within the 270 mm scan window takes priority. Otherwise the closest coarse hit supplies the bearing. The fine scan expands in 5° steps and checks each bearing with up to five pings. A missing or closer return leaves an edge unresolved. Confirmed open space requires consecutive complete echoes.
-3. The profile reports nearest distance and bearing. With both edges bracketed, the law of cosines estimates width from the outermost obstacle echoes. A partial sweep estimates width from the lateral span of the observed hits. Each confirmed edge needs a farther return or confirmed open space within 10° of its obstacle hit. Three distant measured echoes can confirm background even if their ranges differ, provided the full sample window contains no near echo. The planner uses the edge on the chosen side to size the departure. An uncertain edge uses the larger of its observed lateral extent and half the estimated width, plus a 25 mm margin. The departure scan uses 45° for R (right) and 135° for T (left).
-4. The car normally turns 45° and leaves the line diagonally. With enough room to pivot and usable space beyond an edge, it can turn 90° and shift sideways after verifying range in the new heading. It then aligns with the track and passes the obstacle. If neither route fits, the controller can retrace the recent approach once and rescan. It allows 30 mm after one second of confirmed straight travel at 10 RPM or more, or up to 60 mm for insufficient departure room after two seconds. While it is still on the line, the run stays active and retries when the route or echo is unresolved.
-5. The car turns 45° toward the original line behind the obstacle. If the inward corridor is blocked, it can continue along the bypass in short increments. When encoder progress reaches the expected vicinity, two distinct IR hits confirm the line. The car centres its axle, turns 45° back to the original heading, and verifies fresh line and forward range data before resuming line following.
+3. The sweep estimates width from the two outermost obstacle echoes when both edges are bracketed, or from the lateral span of the observed hits when an edge is missing. The firmware halves both estimates and rounds to the nearest millimetre. It samples 45° for R (right) and 135° for T (left). The planner uses the outer edge, the corrected width when an edge is uncertain, and room for the chassis when setting lateral travel.
+4. The car picks the clearer usable side and favours T when both side readings are equal. It turns 90°, verifies live range and shifts sideways. It then turns 90° in the opposite direction and passes the obstacle. If there is insufficient room, the controller can retrace a verified recent approach and rescan.
+5. Behind the obstacle, the car turns 90° toward the original line. When encoder progress reaches the expected vicinity, two distinct IR hits confirm black tape. The car centres its axle and turns 90° to the original heading. Fresh line and forward range data allow line following to resume or start a new sweep immediately if there is another obstacle ahead.
 
 STOP, link or motor faults, stale inputs, and a failed or timed-out search stop the detour. After a fault, reposition the car on the line. Reset clears the stopped controller and a separate START begins the next run. The wheel track, servo direction and sensor-to-axle offset require calibration on the car. Left and right encoders use GP2 and GP3 respectively.
 
@@ -51,7 +51,7 @@ To check a narrow target that gives an unconfirmed or oversized width, repeat th
 | Trigger, rise and freshness timestamps | 0–2³² − 1 µs or ms, rolling | 32 bits each, using wrap-safe elapsed time |
 | Sweep range and closest distance | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits per entry and closest-distance field; 12 bits on wire for measured distance |
 | Sweep bearing | 30°–150° by default, optionally 15°–165°, in 5° steps | Implicit scan index. Reported bearings stay in the standard range of the 7-bit wire field. |
-| Estimated width | 0–2000 mm, 2047 unavailable | 11 bits in the profile and on wire |
+| Corrected width estimate | 1–1000 mm, 2047 unavailable | 11 bits in the profile and on wire |
 | Obstacle front projection | 0–511 mm, saturated above 511 | 9 bits in the profile |
 | Background range near each edge | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits each in the local profile |
 | Departure heading range | 0–4000 mm, 4094 open, 4095 unavailable | 12 bits each at 45° left and right in the profile and MQTT |
@@ -61,9 +61,9 @@ To check a narrow target that gives an unconfirmed or oversized width, repeat th
 | Detour phase and side | 0–15, none/left/right | 4 and 2 bits in RAM and the low six bits of the MQTT avoidance byte |
 | Wait or stop cause, phase, and forward range | 16 cause codes, phases 0–15, range 0–4095 | 4, 4 and 12 bits in the extended MQTT avoidance packet |
 | Movement request and reply | 7 planner actions, 5 reply states | 3 bits each in the planner |
-| Travel command distance | 0–623 mm | 10 bits in planner output |
+| Travel command distance | 0–440 mm | 9 bits in planner output |
 | Pass distance and axle offset | 0–511 mm | 9 bits each in planner storage |
-| Lateral bypass offset and turn | 0–400 mm, 45° or 90° | 9 bits for offset and 1 bit for turn in planner storage |
+| Lateral bypass offset | 0–400 mm | 9 bits in planner storage. Pivots use a fixed 90° turn. |
 | Crossing count, reverse authorization and input flags | 0–2 crossing samples, boolean flags | 2-bit count and one bit per flag |
 | Motion queue maneuver argument | Forward 1–2000, 90° 2048–2049, reverse 2050–4049, 45° 4094–4095 | 12-bit argument within a 16-bit command |
 
@@ -210,3 +210,7 @@ The host dispatcher replayed a saved sweep with a 196 mm nearest return, 294 mm 
 ## Close obstacle with a clear departure side
 
 The host planner replayed a 64 mm near return, a 78 mm width estimate, a clipped left edge and 68/839 mm left/right departure readings. With a verified straight approach long enough to retrace, it requested a 60 mm reverse. A fresh scan with enough turning room then selected a 90° right pivot. With no approach to retrace, an unchanged forward reading kept the servo centred. A change of at least 30 mm allowed another sweep. The scan, planner, dispatcher and 16 dashboard tests passed. The integrated Pico W MQTT image linked and generated a UF2. Track testing is pending. [Test and build output](logs/2026-11-20_close_obstacle.txt)
+
+## Corrected width and successive 90° detours
+
+Host tests verified that full and partial sweeps report half the previous width estimate. The planner selected T with equal usable clearances, followed the mirrored left and right 90° routes, centred on black tape, and requested a fresh sweep when another obstacle was directly ahead after returning to the line. The controller test verified dispatch of the existing 90° motor command. Pico W MQTT, stationary bench and self-test images built successfully. Track testing is pending. [Test and build output](logs/2026-11-20_90_degree_detours.txt)

@@ -12,10 +12,10 @@
 #define FINE_ATTEMPTS 5u
 #define RANGE_LOG_INTERVAL_MS 2000u
 #define SCAN_WAKE 1u
-#define BYPASS_SCAN_STEPS (S5_BYPASS_TURN_DEG / S5_FINE_STEP)
+#define BYPASS_SCAN_STEPS (S5_CLEARANCE_BEARING_DEG / S5_FINE_STEP)
 
-_Static_assert(S5_BYPASS_TURN_DEG % S5_FINE_STEP == 0 && BYPASS_SCAN_STEPS <= S5_CENTRE_INDEX,
-               "The sweep must sample the actual departure heading");
+_Static_assert(S5_CLEARANCE_BEARING_DEG % S5_FINE_STEP == 0 && BYPASS_SCAN_STEPS <= S5_CENTRE_INDEX,
+               "The sweep must cover both clearance bearings");
 
 static ID scan_event;
 static unsigned servo_angle = S5_CENTRE_ANGLE;
@@ -203,8 +203,8 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     aim(S5_CENTRE_ANGLE);
     if (request) refresh_forward(*request);
     tm_printf((UB*)"%s paths T(left %u deg)=%u mm R(right %u deg)=%u mm (4094=open, 4095=unavailable)\n",
-              tag, S5_CENTRE_ANGLE + S5_BYPASS_TURN_DEG, (unsigned)profile->left_path_mm,
-              S5_CENTRE_ANGLE - S5_BYPASS_TURN_DEG, (unsigned)profile->right_path_mm);
+              tag, S5_CENTRE_ANGLE + S5_CLEARANCE_BEARING_DEG, (unsigned)profile->left_path_mm,
+              S5_CENTRE_ANGLE - S5_CLEARANCE_BEARING_DEG, (unsigned)profile->right_path_mm);
     if (profile->width_status != S5_WIDTH_OK) {
         if (profile->width_mm == S5_UNKNOWN_WIDTH)
             tm_printf((UB*)"%s width=unavailable (%s) nearest_distance=%u mm\n",
@@ -352,8 +352,7 @@ static void bench_print_plan(const S5_PROFILE *profile)
     }
     tm_printf((UB*)"[S5 BENCH] plan=%s turn=%u deg departure=%u mm lateral_offset=%u mm pass=%u mm\n",
               plan.side == S5_LEFT ? "T (left)" : "R (right)",
-              plan.turn_90 ? S5_LATERAL_TURN_DEG : S5_BYPASS_TURN_DEG,
-              plan.turn_90 ? (unsigned)plan.offset_mm : s5_diagonal_mm(plan.offset_mm),
+              S5_LATERAL_TURN_DEG, (unsigned)plan.offset_mm,
               (unsigned)plan.offset_mm, (unsigned)plan.pass_mm);
 }
 
