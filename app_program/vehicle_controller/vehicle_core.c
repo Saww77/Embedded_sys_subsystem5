@@ -55,7 +55,7 @@ void vc_core_step(VC_MODEL *m, const VC_INPUT *in, VC_OUTPUT *out)
         m->avoidance = (S5_AVOID){0};
     }
 
-    if (!in->link_ok) { halt(m, in, VC_FAULT, VC_REASON_LINK); return; }
+    /* Once START is accepted, navigation uses local sensors. */
     if (!in->ready) { halt(m, in, VC_FAULT, VC_REASON_MOTOR); return; }
     if (!in->line_valid || in->line_age_ms > VC_LINE_MAX_AGE_MS) {
         halt(m, in, VC_FAULT, VC_REASON_STALE_LINE);

@@ -38,7 +38,7 @@ function draw(data) {
   let description = "Waiting for a live heartbeat. Stored broker messages do not confirm the Pico is online.";
   if (!data.broker_connected) {
     title = "Broker unavailable";
-    description = "Check the broker address, listener and firewall. The dashboard retries automatically.";
+    description = "The dashboard is reconnecting. An active run can continue on the Pico.";
   } else if (!data.monitor_ready) {
     description = "Waiting for the dashboard’s MQTT subscriptions.";
   } else if (diagnostic?.fresh && diagnostic.data.start_block) {
@@ -53,7 +53,7 @@ function draw(data) {
     description = "The live heartbeat confirms Wi-Fi, MQTT and the command subscription.";
   } else if (data.pico.age !== null && !data.pico.fresh) {
     title = "Heartbeat is stale";
-    description = "No live signal for over 15 seconds. START is paused; STOP remains available.";
+    description = "The Pico may still be driving locally. Command delivery is unconfirmed until it reconnects.";
   } else if (data.pico.fresh) {
     title = "Pico connection not ready";
     description = "Wait for all three connection flags before sending START.";

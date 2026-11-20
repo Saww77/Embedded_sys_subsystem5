@@ -168,7 +168,7 @@ static void test_rejoin(bool left, bool retry, bool open_side)
 
 static void test_abort_paths(void)
 {
-    enum { OPERATOR_STOP, LINK_LOST, STALE_LINE, NO_ECHO, MOTOR_REJECTED, NO_LINE };
+    enum { OPERATOR_STOP, STALE_LINE, NO_ECHO, MOTOR_REJECTED, NO_LINE };
     for (unsigned cause = OPERATOR_STOP; cause <= NO_LINE; ++cause) {
         VC_MODEL model = {0};
         VC_INPUT in = track_input();
@@ -177,7 +177,6 @@ static void test_abort_paths(void)
         start_move(&model, &in, &out, S5_ADVANCE, 215);
         switch (cause) {
         case OPERATOR_STOP: in.stop = true; break;
-        case LINK_LOST: in.link_ok = false; break;
         case STALE_LINE: in.line_age_ms = VC_LINE_MAX_AGE_MS + 1; break;
         case NO_ECHO: in.avoidance.range_valid = false; break;
         case MOTOR_REJECTED: in.avoidance.motion = S5_MOTION_FAILED; break;
@@ -192,13 +191,39 @@ static void test_abort_paths(void)
     }
 }
 
+static void test_link_loss_does_not_end_a_run(void)
+{
+    VC_MODEL model = {0};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    in.start = true;
+    step(&model, &in, &out, 20);
+    assert(model.state == VC_FOLLOW_LINE);
+    in.start = false;
+    in.link_ok = false;
+    step(&model, &in, &out, 20);
+    assert(model.state == VC_FOLLOW_LINE && !out.stop && out.left_rpm == 30);
+    in.obstacle_blocked = true;
+    in.avoidance.range_mm = 200;
+    step(&model, &in, &out, 20);
+    assert(model.state == VC_AVOIDING && model.avoidance.phase == S5_PROFILE_PATH);
+    in.avoidance.profile = obstacle(true);
+    in.avoidance.profile_valid = true;
+    in.avoidance.profile_at = in.avoidance.now + 600;
+    step(&model, &in, &out, 600);
+    start_move(&model, &in, &out, S5_PIVOT_LEFT, 0);
+    in.stop = true;
+    step(&model, &in, &out, 20);
+    assert(out.stop && model.state == VC_IDLE);
+}
+
 static void test_unsafe_profile_and_scan_timeout(void)
 {
     VC_MODEL model = {0};
     VC_INPUT in = track_input();
     VC_OUTPUT out;
     S5_PROFILE scan = obstacle(false);
-    scan.left_path_mm = 349;
+    scan.left_path_mm = 150;
     scan.right_path_mm = 190;
     profile(&model, &in, &out, scan);
     assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_WAIT_PATH &&
@@ -259,7 +284,7 @@ static void test_width_and_side_clearance(void)
     assert(s5_plan_bypass(&scan).side == S5_RIGHT);
 
     scan.front_mm = 215;
-    scan.left_path_mm = 235;
+    scan.left_path_mm = 150;
     scan.right_path_mm = 222;
     plan = s5_plan_bypass(&scan);
     assert(plan.side == S5_NO_SIDE && plan.failure == S5_FAIL_SIDE);
@@ -284,7 +309,7 @@ static void test_bypass_with_estimated_edges(void)
     plan = s5_plan_bypass(&scan);
     assert(plan.side == S5_LEFT && plan.offset_mm == 195 && plan.pass_mm == 350);
 
-    scan.left_path_mm = 220;
+    scan.left_path_mm = 150;
     scan.right_path_mm = 188 + 15 + S5_MANEUVER_STOP_MM - 1;
     plan = s5_plan_bypass(&scan);
     assert(plan.side == S5_NO_SIDE && plan.failure == S5_FAIL_SIDE);
@@ -311,6 +336,7 @@ static void test_default_left_with_unconfirmed_clearance(void)
                          .profile_valid = true, .range_mm = S5_UNKNOWN_RANGE};
     assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_PROFILE_PATH);
     in.profile.pivot_confirmed = true;
+    in.echo_quiet = true;
     assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_TURN_OUT);
     S5_AVOID expired = state;
     in.now = 2200;
@@ -332,16 +358,29 @@ static void test_default_left_with_unconfirmed_clearance(void)
     assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_SHIFT_OUT);
     in.now = 1160;
     in.motion = S5_MOTION_NONE;
-    assert(s5_avoid_step(&state, &in).action == S5_WAIT);
+    S5_AVOID waiting = state;
+    assert(s5_avoid_step(&waiting, &in).action == S5_WAIT && waiting.waiting_echo);
+    in.echo_quiet = false;
     in.range_valid = true;
     in.range_mm = 860;
     in.range_at = in.now;
     S5_AVOID_OUTPUT move = s5_avoid_step(&state, &in);
     assert(move.action == S5_ADVANCE && move.distance_mm == 305);
+    state.issued_mm = 0;
+    in.range_mm = 207;
+    move = s5_avoid_step(&state, &in);
+    assert(move.action == S5_ADVANCE && move.distance_mm == 42);
+    in.motion = S5_MOTION_PENDING;
+    in.range_mm = 180;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT);
+    in.range_mm = 150;
+    assert(s5_avoid_step(&state, &in).action == S5_STOP && state.depth == 1);
 
     scan.left_path_mm = 80;
     assert(s5_plan_bypass(&scan).side == S5_NO_SIDE);
-    scan.left_path_mm = S5_UNKNOWN_RANGE;
+    scan.left_path_mm = 207;
+    scan.width_mm = S5_UNKNOWN_WIDTH;
+    assert(s5_plan_bypass(&scan).probe_left);
     scan.front_mm = S5_DEPARTURE_CLEARANCE_MM - 1u;
     assert(s5_plan_bypass(&scan).failure == S5_FAIL_ROOM);
 }
@@ -402,7 +441,8 @@ static void test_stationary_retry(void)
     VC_INPUT in = track_input();
     VC_OUTPUT out;
     S5_PROFILE scan = obstacle(true);
-    scan.left_path_mm = scan.right_path_mm = S5_UNKNOWN_RANGE;
+    scan.left_path_mm = 80;
+    scan.right_path_mm = S5_UNKNOWN_RANGE;
     scan.width_mm = S5_UNKNOWN_WIDTH;
     profile(&model, &in, &out, scan);
     assert(out.maneuver.action == S5_RESCAN && model.avoidance.phase == S5_PROFILE_PATH);
@@ -682,6 +722,7 @@ int main(void)
     test_rejoin(true, false, true);
     test_rejoin(false, false, true);
     test_abort_paths();
+    test_link_loss_does_not_end_a_run();
     test_unsafe_profile_and_scan_timeout();
     test_reentry_limit();
     test_width_and_side_clearance();

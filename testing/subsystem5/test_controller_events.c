@@ -172,7 +172,9 @@ int main(void)
 
     connection = 0;
     vehicle_notify_feedback();
-    assert(work() == TMO_FEVR && vehicle_state() == VC_FAULT);
+    assert(work() > 0 && vehicle_state() == VC_AVOIDING && vehicle_obstacle_scan_current(request));
+    vehicle_request_stop();
+    assert(work() == TMO_FEVR && vehicle_state() == VC_IDLE);
     assert(!vehicle_obstacle_scan_current(request));
     S5_PROFILE stale = {.nearest_mm = S5_SCAN_STOP_MM};
     vehicle_finish_obstacle_scan(&stale, request);
@@ -222,8 +224,7 @@ int main(void)
 
     S5_PROFILE unresolved = {.nearest_mm = 208, .front_mm = 203, .width_mm = S5_UNKNOWN_WIDTH,
                              .angle_offset_deg = 60, .left_mm = S5_UNKNOWN_RANGE, .right_mm = S5_UNKNOWN_RANGE,
-                             .left_path_mm = S5_UNKNOWN_RANGE,
-                             .right_path_mm = S5_UNKNOWN_RANGE};
+                             .left_path_mm = 80, .right_path_mm = S5_UNKNOWN_RANGE};
     uint32_t first_request = request;
     clock_ms += 20;
     vehicle_finish_obstacle_scan(&unresolved, request);
@@ -318,5 +319,26 @@ int main(void)
     assert(work() > 0 && model.avoidance.phase == S5_SHIFT_OUT && !queued_command);
     vehicle_submit_obstacle_range(860);
     assert(work() > 0 && (queued_command >> 4) == 305);
-    puts("PASS stop-before-scan, default left pivot and advance only after fresh post-turn range");
+    motor_acknowledge(S2_REPLY_OK);
+    work();
+    S5_PING missed = s5_classify_echo(S5_ECHO_QUIET, 0);
+    clock_ms += 90;
+    vehicle_submit_obstacle_ping(missed);
+    assert(!event_flags);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.obstacle_forward_mm == 860 && !snapshot.obstacle_no_echo);
+    clock_ms += 90;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    stop_count = 0;
+    vehicle_submit_obstacle_ping(missed);
+    assert(work() > 0 && stop_count == 1 && model.avoidance.waiting_echo);
+    assert(model.avoidance.leg_progress_mm == 55 && vehicle_state() == VC_AVOIDING);
+    motor_stopped();
+    work();
+    clock_ms += 260;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    vehicle_submit_obstacle_range(860);
+    assert(work() > 0 && !model.avoidance.waiting_echo);
+    vehicle_notify_feedback();
+    assert(work() > 0 && (queued_command >> 4) == 250);
+    puts("PASS MQTT loss, local STOP, left pivot, one missed echo and resume after echo recovery");
 }

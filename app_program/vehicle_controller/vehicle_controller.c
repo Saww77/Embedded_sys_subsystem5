@@ -15,6 +15,7 @@
 #define VC_REFRESH_MS 100u
 #define VC_ACTION_TIMEOUT_MS 250u
 #define VC_RESET_TIMEOUT_MS 2500u
+#define VC_ECHO_GRACE_MS 180u
 #define VC_RETRACE_MIN_MS 1000u
 #define VC_RETRACE_LONG_MS 2000u
 #define VC_WAKE 1u
@@ -27,7 +28,7 @@ static VEHICLE_SNAPSHOT data;
 static VC_MODEL model;
 static struct {
     unsigned start:1, stop:1, line_stop:1, auto_start:1, reset:1;
-    unsigned obstacle_monitor:1, profile_valid:1, scan:2;
+    unsigned obstacle_monitor:1, profile_valid:1, scan:2, echo_quiet:1;
 } pending;
 static uint32_t reset_started, reset_refreshed;
 static S5_RANGE_GATE obstacle_range;
@@ -142,6 +143,7 @@ static VC_INPUT controller_input(BOOL ready, BOOL linked, unsigned faults, bool 
         .avoidance = {
             .now = now, .range_at = obstacle_range_at, .range_mm = obstacle_range.range_mm,
             .range_valid = range_valid(now), .profile_at = full_profile_at,
+            .echo_quiet = pending.echo_quiet && now - obstacle_range_at <= S5_RANGE_MAX_AGE_MS,
             .profile = full_profile, .profile_valid = pending.profile_valid,
             .line_at = data.line_timestamp_ms, .line_hit = line_hit(),
             .line_junction = data.l >= LINE_DARK && data.r >= LINE_DARK,
@@ -178,17 +180,27 @@ void vehicle_enable_obstacle_monitor(void)
 {
     if (!lock()) return;
     pending.obstacle_monitor = true;
+    pending.echo_quiet = false;
     obstacle_range = (S5_RANGE_GATE){.range_mm = S5_UNKNOWN_RANGE, .blocked = true};
     unlock();
     vehicle_notify_feedback();
 }
 
-void vehicle_submit_obstacle_range(unsigned range)
+static void submit_obstacle_reading(unsigned range, bool quiet)
 {
     if (!lock()) return;
-    bool accepted = s5_accept_range(&obstacle_range, range);
+    uint32_t now = now_ms();
+    /* One missed forward pulse can use the last verified clear reading.
+       Keep its original timestamp and break any pending open confirmation. */
+    bool hold = quiet && !pending.echo_quiet && s5_range_available(obstacle_range.range_mm) &&
+                !obstacle_range.blocked && obstacle_range.range_mm > S5_SCAN_STOP_MM &&
+                now - obstacle_range_at <= VC_ECHO_GRACE_MS;
+    pending.echo_quiet = quiet;
+    bool accepted = false;
+    if (hold) obstacle_range.first_open = false;
+    else accepted = s5_accept_range(&obstacle_range, range);
     if (accepted) {
-        obstacle_range_at = now_ms();
+        obstacle_range_at = now;
         if (!vc_core_detouring(&model) && !data.obstacle_profile) {
             data.obstacle_valid = s5_range_measured(range);
             if (data.obstacle_valid) {
@@ -202,6 +214,16 @@ void vehicle_submit_obstacle_range(unsigned range)
     }
     unlock();
     if (accepted) vehicle_notify_feedback();
+}
+
+void vehicle_submit_obstacle_range(unsigned range)
+{
+    submit_obstacle_reading(range, false);
+}
+
+void vehicle_submit_obstacle_ping(S5_PING ping)
+{
+    submit_obstacle_reading(ping.range_mm, ping.state == S5_ECHO_QUIET);
 }
 
 static BOOL scan_wanted(void)

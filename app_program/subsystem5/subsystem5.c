@@ -292,7 +292,7 @@ static void scan_task(INT stacd, void *exinf)
 
     for (;;) {
         S5_PING ping = s5_hw_ping();
-        vehicle_submit_obstacle_range(ping.range_mm);
+        vehicle_submit_obstacle_ping(ping);
         log_forward(ping, "forward");
         UINT events;
         ER wake = tk_wai_flg(scan_event, SCAN_WAKE, TWF_ORW | TWF_BITCLR, &events, PING_INTERVAL_MS);

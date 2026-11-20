@@ -6,6 +6,7 @@
 #define MAX_LATERAL_OFFSET_MM 400u
 #define FOLLOW_AHEAD_MARGIN_MM 130u
 #define RETRY_STEP_MM 60u
+#define MIN_LEFT_STEP_MM 20u
 #define MOTION_SETTLE_MS 260u
 #define PIVOT_PROOF_MAX_AGE_MS 1500u
 #define SCAN_TIMEOUT_MS 14000u
@@ -34,7 +35,7 @@ static S5_AVOID_OUTPUT go(S5_AVOID *state, S5_PHASE phase, uint32_t now)
     state->line_samples = 0;
     state->last_line_at = now;
     state->leg_progress_mm = 0;
-    state->issued_mm = 0;
+    state->issued_mm = state->waiting_echo = state->short_approach = 0;
     return (S5_AVOID_OUTPUT){.action = S5_WAIT};
 }
 
@@ -99,11 +100,10 @@ S5_BYPASS s5_plan_bypass(const S5_PROFILE *profile)
                 left_path >= left_offset + FRONT_MARGIN_MM + S5_MANEUVER_STOP_MM;
     bool right = right_room && s5_range_available(right_path) &&
                  right_path >= right_offset + FRONT_MARGIN_MM + S5_MANEUVER_STOP_MM;
-    /* With a usable width and no verified route, face left to measure
-       that heading directly. A short measured left return rules it out. */
+    /* If neither reading supports the planned distance, try left unless
+       there is evidence that the left side is already too close. */
     bool probe_left = !left && !right && left_room &&
-                      !s5_range_available(left_path) &&
-                      profile->width_mm && profile->width_mm != S5_UNKNOWN_WIDTH;
+                      (!s5_range_available(left_path) || left_path > S5_MANEUVER_STOP_MM);
     if (!left && !right && !probe_left) {
         if ((left_room && !s5_range_available(left_path)) ||
             (right_room && !s5_range_available(right_path))) plan.failure = S5_FAIL_ECHO;
@@ -139,11 +139,16 @@ static unsigned leg_distance(const S5_AVOID *state, const S5_AVOID_INPUT *in)
     }
 }
 
+static unsigned accepted_progress(const S5_AVOID *state, const S5_AVOID_INPUT *in)
+{
+    if (in->motion != S5_MOTION_PENDING) return 0u;
+    return in->travel_mm < state->issued_mm ? in->travel_mm : state->issued_mm;
+}
+
 static S5_AVOID_OUTPUT avoid_on_leg(S5_AVOID *state, const S5_AVOID_INPUT *in)
 {
     if (state->depth == S5_NESTED_LIMIT) return fail(state, S5_FAIL_CLOSE, in->now);
-    unsigned travelled = in->motion == S5_MOTION_PENDING ? in->travel_mm : 0u;
-    if (travelled > state->issued_mm) travelled = state->issued_mm;
+    unsigned travelled = accepted_progress(state, in);
     unsigned progress = state->leg_progress_mm + travelled;
     if (progress > S5_MAX_LEG_MM) return fail(state, S5_FAIL_MOTION, in->now);
 
@@ -284,6 +289,30 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         }
         return wait;
     }
+    bool forward = phase == S5_SHIFT_OUT || phase == S5_PASS ||
+                   phase == S5_FIND_LINE || phase == S5_CENTER_LINE;
+    bool moving = in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING;
+    bool probing = phase == S5_TURN_OUT && state->probe_left;
+    if (state->waiting_echo) {
+        if (in->stopped && range_fresh && elapsed >= MOTION_SETTLE_MS &&
+            at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS)) {
+            state->waiting_echo = false;
+            state->phase_at = in->now - MOTION_SETTLE_MS;
+        }
+        return wait;
+    }
+    if (!range_fresh && in->echo_quiet &&
+        ((forward && in->motion != S5_MOTION_DONE) ||
+         (in->motion == S5_MOTION_NONE && phase != S5_PROFILE_PATH && phase != S5_BACK_UP &&
+          !(probing && proof_fresh)))) {
+        unsigned progress = state->leg_progress_mm + accepted_progress(state, in);
+        if (progress > S5_MAX_LEG_MM) return fail(state, S5_FAIL_MOTION, in->now);
+        state->leg_progress_mm = progress;
+        state->issued_mm = state->short_approach = 0;
+        state->waiting_echo = true;
+        state->phase_at = in->now;
+        return (S5_AVOID_OUTPUT){.action = moving ? S5_STOP : S5_WAIT};
+    }
     unsigned timeout = PHASE_TIMEOUT_MS;
     if (phase == S5_PROFILE_PATH) timeout = SCAN_TIMEOUT_MS;
     else if (state->issued_mm > MAX_LATERAL_OFFSET_MM + S5_SEARCH_MARGIN_MM) timeout = LONG_MOVE_TIMEOUT_MS;
@@ -354,8 +383,6 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
                                  .distance_mm = reverse_mm};
     }
 
-    bool forward = phase == S5_SHIFT_OUT || phase == S5_PASS ||
-                   phase == S5_FIND_LINE || phase == S5_CENTER_LINE;
     if (phase == S5_CHECK_LINE) {
         if (!in->stopped || !range_fresh || elapsed < MOTION_SETTLE_MS ||
             !at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS)) return wait;
@@ -369,11 +396,10 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         }
         return go(state, S5_COMPLETE, in->now);
     }
-    bool moving = in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING;
-    if (moving && forward && range_fresh && in->range_mm <= S5_SCAN_STOP_MM)
+    unsigned stop_distance = state->short_approach ? S5_MANEUVER_STOP_MM : S5_SCAN_STOP_MM;
+    if (moving && forward && range_fresh && in->range_mm <= stop_distance)
         return avoid_on_leg(state, in);
-    bool probing = phase == S5_TURN_OUT && state->probe_left;
-    if (moving && (range_fresh ? in->range_mm < S5_TURN_CLEARANCE_MM : !probing))
+    if (moving && (range_fresh ? in->range_mm < S5_TURN_CLEARANCE_MM : !(probing || in->echo_quiet)))
         return fail(state, range_fresh ? S5_FAIL_CLOSE : S5_FAIL_ECHO, in->now);
 
     if (!state->depth && phase == S5_FIND_LINE &&
@@ -395,7 +421,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
             unsigned travelled = state->leg_progress_mm + state->issued_mm;
             if (travelled > S5_MAX_LEG_MM) return fail(state, S5_FAIL_MOTION, in->now);
             state->leg_progress_mm = travelled;
-            state->issued_mm = 0;
+            state->issued_mm = state->short_approach = 0;
             if (travelled >= target) return finish_forward_leg(state, in);
             state->phase_at = in->now;
             return wait;
@@ -422,10 +448,15 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         return (S5_AVOID_OUTPUT){.action = left ? S5_PIVOT_LEFT : S5_PIVOT_RIGHT};
     }
     if (state->leg_progress_mm >= target) return finish_forward_leg(state, in);
-    if (in->range_mm <= S5_SCAN_STOP_MM) return avoid_on_leg(state, in);
-
     unsigned distance = target - state->leg_progress_mm;
-    if (in->range_mm < distance + S5_MANEUVER_STOP_MM) {
+    if (in->range_mm <= S5_SCAN_STOP_MM) {
+        unsigned buffer = S5_MANEUVER_STOP_MM + FRONT_MARGIN_MM;
+        if (phase != S5_SHIFT_OUT || !state->probe_left || state->leg_progress_mm ||
+            in->range_mm < buffer + MIN_LEFT_STEP_MM) return avoid_on_leg(state, in);
+        unsigned safe_step = in->range_mm - buffer;
+        if (distance > safe_step) distance = safe_step;
+        state->short_approach = true;
+    } else if (in->range_mm < distance + S5_MANEUVER_STOP_MM) {
         if (!state->depth && phase == S5_FIND_LINE && !state->leg_progress_mm) {
             if (state->passed_mm >= S5_MAX_PASS_MM) return fail(state, S5_FAIL_CLOSE, in->now);
             unsigned remaining = S5_MAX_PASS_MM - state->passed_mm;
