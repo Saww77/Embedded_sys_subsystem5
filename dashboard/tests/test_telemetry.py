@@ -36,8 +36,9 @@ class TelemetryTests(unittest.TestCase):
     def test_reverse_phase_uses_existing_avoidance_byte(self):
         self.assertEqual(decode_telemetry('avoidance', b'\x0e'),
                          dict(phase=14, phase_label='Reversing to rescan', side=None))
-        with self.assertRaises(ValueError):
-            decode_telemetry('avoidance', b'\x0f')
+        waiting = decode_telemetry('avoidance', b'\x0f\x16\xff\x0f')
+        self.assertEqual(waiting['phase_label'], 'Waiting to verify a route')
+        self.assertEqual(waiting['failure'], 'The ultrasonic sensor lost a usable echo')
 
     def test_extended_obstacle_sample_and_freshness(self):
         packet = bytes.fromhex('8c f0 ff ff 7f 94 06')
@@ -84,7 +85,7 @@ class TelemetryTests(unittest.TestCase):
                  ('terrain',(2001).to_bytes(2,'little')),('terrain',b'\x00\xc0'),
                  ('obstacle',(4001).to_bytes(6,'little')),('obstacle',(1<<47).to_bytes(6,'little')),
                  ('motion',(1<<67).to_bytes(9,'little')),('motion',(101<<27).to_bytes(9,'little')),
-                 ('avoidance',b'\x0f'),('avoidance',b'\x31'),('avoidance',b'\x41')]
+                 ('avoidance',b'\x00\x16\xff\x0f'),('avoidance',b'\x31'),('avoidance',b'\x41')]
         for kind,payload in packets:
             with self.subTest(kind=kind,payload=payload):
                 with self.assertRaises(ValueError):decode_telemetry(kind,payload)
@@ -131,6 +132,32 @@ class TelemetryTests(unittest.TestCase):
         self.send('vehicle', b'\x00')
         self.send('controller', packet)
         self.assertTrue(self.d.snapshot()['start_allowed'])
+
+    def test_start_is_available_for_an_obstacle_or_missing_echo(self):
+        packet = bytearray(31)
+        packet[0], packet[4] = 2, 1 | 2 | 8 | 64
+        self.send('status', b'\x07')
+        self.send('controller', packet)
+        commands = []
+        def publish(topic, payload, qos, retain):
+            commands.append((topic, payload, qos, retain))
+            return SimpleNamespace(rc=0)
+        self.d.client = SimpleNamespace(publish=publish)
+        for faults in (b'\x00', b'\x40'):
+            self.send('vehicle', faults)
+            state = self.d.snapshot()
+            self.assertTrue(state['start_allowed'])
+            self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],
+                             'Ready to scan for a route')
+            self.assertEqual(self.d.send('start')['hex'], '01')
+        self.assertEqual(commands, [(self.d.root + '/command', b'\x01', 0, False)] * 2)
+        packet[1] = 3
+        self.send('controller', packet)
+        self.send('avoidance', b'\x0f\x16\xff\x0f')
+        state = self.d.snapshot()
+        self.assertTrue(state['start_allowed'])
+        self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],
+                         'Waiting to verify a route')
 
     def test_timing_diagnostics_and_stopped_reset(self):
         packet=bytearray(31);packet[0]=2;packet[1]=5;packet[3]=3;packet[4]=1|2|64;packet[5]=2

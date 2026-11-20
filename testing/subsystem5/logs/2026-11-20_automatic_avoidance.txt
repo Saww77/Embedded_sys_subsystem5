@@ -1,0 +1,38 @@
+scan
+PASS echo capture, scan packing, partial width estimates, sweep limits and bench background replay
+
+planner
+PASS automatic detours, width-based offset, lateral route, rescan, line recovery and cancellation
+
+controller
+PASS START with missing echo or a close obstacle, automatic recovery, STOP and right pivot
+
+track replay
+PASS recorded sweep 1 selected R, width estimate 399 mm, 90 degree turn and 368 mm offset
+PASS recorded sweep 2 selected R, width estimate 402 mm, 90 degree turn and 364 mm offset
+
+dashboard
+................
+----------------------------------------------------------------------
+Ran 16 tests in 0.011s
+
+OK
+
+browser
+PASS Edge and Mosquitto integration with both START cases and preserved STOP
+
+firmware
+PASS Pico W integrated mtk3pico_smp1_usb_cdc_wifi_lwip_mqtt_nos4.uf2 (739328 bytes)
+Finished building target: mtk3pico_smp1_usb_cdc_wifi_lwip_mqtt_nos4.elf
+   text	   data	    bss	    dec	    hex	filename
+ 369396	    104	  82700	 452200	  6e668	mtk3pico_smp1_usb_cdc_wifi_lwip_mqtt_nos4.elf
+
+PASS Pico W self-test mtk3pico_smp1_usb_cdc_wifi_nos4_test.uf2 (625152 bytes)
+Finished building target: mtk3pico_smp1_usb_cdc_wifi_nos4_test.elf
+   text	   data	    bss	    dec	    hex	filename
+ 312484	     92	  24904	 337480	  52648	mtk3pico_smp1_usb_cdc_wifi_nos4_test.elf
+
+PASS Pico W servo-bench mtk3pico_smp1_usb_cdc_s5bench.uf2 (208384 bytes)
+Finished building target: mtk3pico_smp1_usb_cdc_s5bench.elf
+   text	   data	    bss	    dec	    hex	filename
+ 104070	     40	  22816	 126926	  1efce	mtk3pico_smp1_usb_cdc_s5bench.elf

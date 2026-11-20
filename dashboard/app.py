@@ -20,8 +20,8 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from mqtt_protocol import (AVOIDANCE_FAILED, START_BLOCK_OBSTACLE, TELEMETRY_TOPICS, VEHICLE_FAULT_NO_ECHO,
-                           command_payload, decode_telemetry)
+from mqtt_protocol import (AVOIDANCE_FAILED, AVOIDANCE_WAIT_PATH, START_BLOCK_OBSTACLE,
+                           TELEMETRY_TOPICS, VEHICLE_FAULT_NO_ECHO, command_payload, decode_telemetry)
 
 HEARTBEAT_TIMEOUT = 15.0
 TELEMETRY_TIMEOUT = 2.0
@@ -219,15 +219,31 @@ class Dashboard:
                                "sensor power, common ground, GP16 trigger and the 3.3 V echo on GP17.",
                 )
             avoidance = telemetry["avoidance"]
-            if (obstacle_interlock and not echo_fault and avoidance["fresh"] and
+            if (obstacle_interlock and avoidance["fresh"] and
                     avoidance["data"]["phase"] == AVOIDANCE_FAILED):
                 failure = avoidance["data"].get("failure")
                 current["data"] = dict(
                     current["data"],
                     start_block_label="Detour stopped",
                     start_hint=(failure + ". " if failure else "") +
-                               "Place the car back on the line, press Reset, and confirm the path is clear before pressing START.",
+                               "Place the car back on the line and press Reset before pressing START.",
                 )
+            if current["fresh"] and current["data"]["start_block"] == 0:
+                diagnostics = current["data"]
+                if diagnostics["state"] in ("AVOIDING", "RECOVER_LINE"):
+                    waiting = avoidance["fresh"] and avoidance["data"]["phase"] == AVOIDANCE_WAIT_PATH
+                    current["data"] = dict(
+                        diagnostics,
+                        start_block_label="Waiting to verify a route" if waiting else "Automatic avoidance active",
+                        start_hint=("The car will check again and continue when it has clearance." if waiting
+                                    else "The car will continue the run automatically."),
+                    )
+                elif diagnostics["obstacle_blocked"]:
+                    current["data"] = dict(
+                        diagnostics,
+                        start_block_label="Ready to scan for a route",
+                        start_hint="Press START to scan. The car moves once it verifies clearance.",
+                    )
             reset_block = "Waiting for live controller diagnostics."
             if current["fresh"]:
                 diagnostics = current["data"]

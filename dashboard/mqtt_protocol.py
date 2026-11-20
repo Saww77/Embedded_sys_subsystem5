@@ -8,21 +8,22 @@ VEHICLE_FAULTS = ((1, 'Motor'), (2, 'Encoder'), (4, 'IMU'),
                   (VEHICLE_FAULT_NO_ECHO, 'Ultrasonic echo'), (16, 'Wi-Fi'))
 TELEMETRY_TOPICS = ('vehicle', 'motion', 'line', 'terrain', 'obstacle', 'controller', 'avoidance')
 AVOIDANCE_PHASES = (
-    'Inactive', 'Profiling obstacle', 'Turning outward', 'Driving diagonally off the line',
+    'Inactive', 'Profiling obstacle', 'Turning outward', 'Moving off the line',
     'Aligning alongside the obstacle', 'Passing obstacle', 'Turning toward the line',
     'Searching for the line', 'Centering on the line', 'Realigning with the track',
     'Continuing past the obstacle', 'Line reacquired', 'Detour stopped',
-    'Checking the rejoined path', 'Reversing to rescan',
+    'Checking the rejoined path', 'Reversing to rescan', 'Waiting to verify a route',
 )
 AVOIDANCE_SIDES = (None, 'Left', 'Right')
 AVOIDANCE_FAILED = 12
+AVOIDANCE_WAIT_PATH = 15
 AVOIDANCE_FAILURES = (
     None,
     'Servo sweep timed out',
     'The sweep could not confirm the obstacle',
     'The sweep could not confirm both edges for a width estimate',
-    'Too little room to turn onto the departure diagonal',
-    'Neither 45° departure path had enough clearance',
+    'Too little room to begin the detour',
+    'Neither departure path had enough clearance',
     'The ultrasonic sensor lost a usable echo',
     'An obstacle was too close for the next move',
     'The motor controller could not finish the move',
@@ -92,7 +93,7 @@ def decode_telemetry(kind, payload):
             forward = bits(16, 12)
             if (word >> 28 or failure >= len(AVOIDANCE_FAILURES) or
                     failed_phase >= len(AVOIDANCE_PHASES) or 4000 < forward < 4094 or
-                    (failure and phase != AVOIDANCE_FAILED)):
+                    (failure and phase not in (AVOIDANCE_FAILED, AVOIDANCE_WAIT_PATH))):
                 raise ValueError('Invalid detour diagnostics')
             result.update(failure=AVOIDANCE_FAILURES[failure],
                           failed_phase=AVOIDANCE_PHASES[failed_phase] if failure else None,

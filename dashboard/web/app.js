@@ -33,6 +33,7 @@ function draw(data) {
     : data.reset_block === undefined ? "Restart the Python dashboard from the updated repository."
     : data.reset_block ?? "Reset clears the stopped controller for a new run. Press Start when ready.";
   el("ready-dot").classList.toggle("online", data.start_allowed);
+  const diagnostic = data.telemetry?.controller;
   let title = "Waiting for the Pico";
   let description = "Waiting for a live heartbeat. Stored broker messages do not confirm the Pico is online.";
   if (!data.broker_connected) {
@@ -40,9 +41,13 @@ function draw(data) {
     description = "Check the broker address, listener and firewall. The dashboard retries automatically.";
   } else if (!data.monitor_ready) {
     description = "Waiting for the dashboard’s MQTT subscriptions.";
-  } else if (data.telemetry?.controller?.fresh && data.telemetry.controller.data.start_block) {
+  } else if (diagnostic?.fresh && diagnostic.data.start_block) {
     title = "START blocked by controller";
-    description = data.telemetry.controller.data.start_block_label;
+    description = diagnostic.data.start_block_label;
+  } else if (data.start_allowed && diagnostic?.fresh &&
+             (diagnostic.data.obstacle_blocked || ["AVOIDING", "RECOVER_LINE"].includes(diagnostic.data.state))) {
+    title = diagnostic.data.start_block_label;
+    description = diagnostic.data.start_hint;
   } else if (data.start_allowed) {
     title = "Pico ready for commands";
     description = "The live heartbeat confirms Wi-Fi, MQTT and the command subscription.";

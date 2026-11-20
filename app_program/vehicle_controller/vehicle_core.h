@@ -15,7 +15,7 @@ typedef enum { VC_START_READY, VC_START_STARTUP, VC_START_LINK, VC_START_MOTOR,
                VC_START_LINE_STOP, VC_START_OBSTACLE } VC_START_BLOCK;
 typedef struct {
     unsigned start:1, stop:1, reset:1, ready:1, link_ok:1, line_valid:1, line_stop:1;
-    unsigned obstacle_blocked:1, obstacle_detected:1, drive_failed:1, motor_busy:1;
+    unsigned obstacle_blocked:1, drive_failed:1, motor_busy:1;
     unsigned motor_faults:4, left_rpm:7, right_rpm:7;
     uint32_t line_age_ms;
     S5_AVOID_INPUT avoidance;

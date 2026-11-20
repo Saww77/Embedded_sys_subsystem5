@@ -188,11 +188,17 @@ def main():
             expect(page.locator("#start-hint")).to_contain_text("echo on GP17")
             expect(page.locator("#pico-description")).to_have_text("Ultrasonic echo unavailable")
             assert page.locator("#start").is_disabled() and page.locator("#stop").is_enabled()
-            fixture.publish(root + "/vehicle", b"\x00").wait_for_publish(timeout=5)
-            diag[3]=0;diag[4]=1|2|64
-            fixture.publish(root + "/controller",diag).wait_for_publish(timeout=5)
+            mission = bytearray(31)
+            mission[0], mission[4] = 2, 1 | 2 | 8 | 64
+            fixture.publish(root + "/controller", mission).wait_for_publish(timeout=5)
+            expect(page.locator("#pico-state")).to_have_text("Ready to scan for a route")
             expect(page.locator("#start")).to_be_enabled()
-            print("PASS diagnostics: specific START blocker, IR values, disabled START and preserved STOP; clearing blocker enables retry")
+            fixture.publish(root + "/avoidance", b"\x0f\x16\xff\x0f").wait_for_publish(timeout=5)
+            mission[1] = 3
+            fixture.publish(root + "/controller", mission).wait_for_publish(timeout=5)
+            expect(page.locator("#pico-state")).to_have_text("Waiting to verify a route")
+            expect(page.locator("#start")).to_be_enabled()
+            print("PASS diagnostics: junction and legacy blockers, START available to scan, automatic route wait")
             fault_diag=bytearray(31);fault_diag[0]=2;fault_diag[1]=5;fault_diag[3]=3;fault_diag[4]=1|2|64;fault_diag[5]=2
             fault_diag[25:29]=(12000).to_bytes(4,"little");fault_diag[29:31]=(15000).to_bytes(2,"little")
             fault_motor=bytearray(motion_packet(2));fault_motor[0]&=~3

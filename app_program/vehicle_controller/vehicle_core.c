@@ -20,18 +20,23 @@ VC_START_BLOCK vc_core_start_block(const VC_MODEL *model, const VC_INPUT *in)
     if (!in->line_valid) return VC_START_NO_LINE;
     if (in->line_age_ms > VC_LINE_MAX_AGE_MS) return VC_START_OLD_LINE;
     if (in->line_stop) return VC_START_LINE_STOP;
-    if (vc_core_detouring(model) || in->obstacle_blocked ||
-        (model->avoidance.phase == S5_FAILED &&
-         (!in->avoidance.line_hit || in->avoidance.line_junction))) return VC_START_OBSTACLE;
+    if (model->avoidance.phase == S5_FAILED &&
+        (!in->avoidance.line_hit || in->avoidance.line_junction)) return VC_START_OBSTACLE;
     return VC_START_READY;
 }
 
 static void halt(VC_MODEL *model, const VC_INPUT *in, VC_STATE state, VC_REASON reason)
 {
     if (vc_core_detouring(model)) {
-        S5_FAILURE failure = reason == VC_REASON_STOP ? S5_FAIL_STOP :
-                             reason == VC_REASON_MOTOR ? S5_FAIL_MOTION : S5_FAIL_INTERLOCK;
-        s5_avoid_abort(&model->avoidance, failure, in->avoidance.now);
+        S5_PHASE phase = model->avoidance.phase;
+        if (phase == S5_PROFILE_PATH || phase == S5_WAIT_PATH ||
+            ((phase == S5_TURN_OUT || phase == S5_BACK_UP) && in->avoidance.motion == S5_MOTION_NONE)) {
+            model->avoidance = (S5_AVOID){0};
+        } else {
+            S5_FAILURE failure = reason == VC_REASON_STOP ? S5_FAIL_STOP :
+                                 reason == VC_REASON_MOTOR ? S5_FAIL_MOTION : S5_FAIL_INTERLOCK;
+            s5_avoid_abort(&model->avoidance, failure, in->avoidance.now);
+        }
     }
     model->state = state;
     model->reason = reason;
@@ -58,7 +63,6 @@ void vc_core_step(VC_MODEL *m, const VC_INPUT *in, VC_OUTPUT *out)
     if (in->line_stop) { halt(m, in, VC_IDLE, VC_REASON_LINE_STOP); return; }
 
     if (!vc_core_detouring(m) && in->obstacle_blocked) {
-        if (!in->obstacle_detected) { halt(m, in, VC_FAULT, VC_REASON_OBSTACLE); return; }
         s5_avoid_begin(&m->avoidance, in->avoidance.now);
         m->avoidance.reverse_available = in->avoidance.can_retrace;
         m->avoidance.reverse_long = in->avoidance.can_retrace_far;

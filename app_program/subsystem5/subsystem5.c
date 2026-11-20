@@ -144,6 +144,11 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     tm_printf((UB*)"%s confirming forward target before GP12 coarse sweep\n", tag);
     unsigned centre = read_at(S5_CENTRE_INDEX, verbose, true, S5_UNKNOWN_RANGE);
     s5_scan_set(&samples, S5_CENTRE_INDEX, centre);
+    if (request && s5_range_available(centre) && centre > S5_CLEAR_MM) {
+        vehicle_submit_obstacle_range(centre);
+        *profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
+        return TRUE;
+    }
     for (unsigned i = S5_COARSE_FIRST; i <= S5_COARSE_LAST; i += S5_COARSE_STEP) {
         if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
         if (i == S5_CENTRE_INDEX && s5_range_available(centre)) continue;
@@ -155,9 +160,6 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
         aim(S5_CENTRE_ANGLE);
         unsigned forward = s5_hw_ping().range_mm;
         if (request) vehicle_submit_obstacle_range(forward);
-        /* A missing echo on any coarse bearing leaves that sector unresolved. */
-        for (unsigned i = S5_COARSE_FIRST; i <= S5_COARSE_LAST; i += S5_COARSE_STEP)
-            if (!s5_range_available(s5_scan_get(&samples, i))) return FALSE;
         if (!s5_range_available(forward) || forward <= S5_CLEAR_MM) return FALSE;
         *profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
         tm_printf((UB*)"%s no obstacle in the coarse sweep\n", tag);
@@ -330,16 +332,16 @@ static void bench_print_plan(const S5_PROFILE *profile)
 
     bench_print_clearance("left 45 deg", profile->left_path_mm);
     bench_print_clearance("right 45 deg", profile->right_path_mm);
-    unsigned offset, pass;
-    S5_FAILURE reason;
-    S5_SIDE side = s5_plan_bypass(profile, &offset, &pass, &reason);
-    if (side == S5_NO_SIDE) {
-        tm_printf((UB*)"[S5 BENCH] plan=STOP turn=0 deg reason=%u\n", (unsigned)reason);
+    S5_BYPASS plan = s5_plan_bypass(profile);
+    if (plan.side == S5_NO_SIDE) {
+        tm_printf((UB*)"[S5 BENCH] plan=STOP turn=0 deg reason=%u\n", (unsigned)plan.failure);
         return;
     }
-    tm_printf((UB*)"[S5 BENCH] plan=%s turn=%u deg diagonal=%u mm lateral_offset=%u mm pass=%u mm\n",
-              side == S5_LEFT ? "LEFT" : "RIGHT", S5_BYPASS_TURN_DEG,
-              s5_diagonal_mm(offset), offset, pass);
+    tm_printf((UB*)"[S5 BENCH] plan=%s turn=%u deg departure=%u mm lateral_offset=%u mm pass=%u mm\n",
+              plan.side == S5_LEFT ? "T (left)" : "R (right)",
+              plan.turn_90 ? S5_LATERAL_TURN_DEG : S5_BYPASS_TURN_DEG,
+              plan.turn_90 ? (unsigned)plan.offset_mm : s5_diagonal_mm(plan.offset_mm),
+              (unsigned)plan.offset_mm, (unsigned)plan.pass_mm);
 }
 
 EXPORT void subsystem5_bench(void)

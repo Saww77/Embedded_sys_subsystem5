@@ -115,14 +115,11 @@ int main(void)
     assert(vehicle_init() == E_OK);
     vehicle_enable_obstacle_monitor();
     vehicle_submit_line(0, 0, 0, 30, 30, FALSE, 0);
-    assert(work() == TMO_FEVR && !vehicle_request_start());
-    assert(vehicle_get_snapshot(&snapshot) && snapshot.obstacle_no_echo);
+    assert(work() == TMO_FEVR);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.obstacle_no_echo && snapshot.start_block == VC_START_READY);
 
     vehicle_submit_obstacle_range(S5_OPEN_RANGE);
-    assert(!vehicle_request_start());
-    vehicle_submit_obstacle_range(S5_OPEN_RANGE);
-    assert(work() == TMO_FEVR && !command_count);
-
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.obstacle_no_echo); /* A single open ping is insufficient. */
     assert(vehicle_request_start());
     vehicle_request_stop();
     assert(work() == TMO_FEVR && stop_count == 1 && !command_count);
@@ -131,12 +128,23 @@ int main(void)
     work();
     assert(vehicle_request_start());
     vehicle_submit_obstacle_range(S5_UNKNOWN_RANGE);
-    assert(work() == TMO_FEVR && !command_count);
-    assert(vehicle_get_snapshot(&snapshot) && snapshot.last_start_reject == VC_START_OBSTACLE);
+    assert(work() > 0 && vehicle_state() == VC_AVOIDING && !command_count);
+    assert(scan_count == 1 && vehicle_obstacle_scan_request(&request));
+    clock_ms += 20;
+    vehicle_finish_obstacle_scan(NULL, request);
+    assert(work() > 0 && scan_count == 2 && vehicle_obstacle_scan_request(&request));
+    clock_ms += 20;
+    vehicle_finish_obstacle_scan(NULL, request);
+    assert(work() > 0 && !command_count && vehicle_state() == VC_AVOIDING);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_phase == S5_WAIT_PATH &&
+           snapshot.obstacle_no_echo && snapshot.start_block == VC_START_READY);
 
-    vehicle_submit_obstacle_range(600);
-    assert(vehicle_request_start());
-    assert(work() > 0 && vehicle_state() == VC_FOLLOW_LINE && command_count == 1);
+    vehicle_submit_obstacle_range(S5_OPEN_RANGE);
+    assert(!event_flags && !command_count);
+    vehicle_submit_obstacle_range(S5_OPEN_RANGE);
+    assert(work() > 0 && vehicle_state() == VC_FOLLOW_LINE && !command_count);
+    vehicle_submit_line(0, 0, 0, 30, 30, FALSE, 0);
+    assert(work() > 0 && command_count == 1);
     vehicle_submit_line(0, 0, 0, 24, 24, FALSE, 0);
     work();
     assert(command_count == 1);
@@ -152,11 +160,11 @@ int main(void)
 
     vehicle_submit_obstacle_range(S5_SCAN_STOP_MM);
     work();
-    assert(vehicle_state() == VC_AVOIDING && stop_count == 2 && !scan_count);
+    assert(vehicle_state() == VC_AVOIDING && stop_count == 2 && scan_count == 2);
     assert(!vehicle_obstacle_scan_request(&request));
     motor_stopped();
     work();
-    assert(scan_count == 1 && vehicle_obstacle_scan_request(&request));
+    assert(scan_count == 3 && vehicle_obstacle_scan_request(&request));
     assert(vehicle_obstacle_scan_current(request));
 
     connection = 0;
@@ -218,14 +226,15 @@ int main(void)
     assert(work() > 0 && vehicle_obstacle_scan_request(&request) && request != first_request);
     clock_ms += 20;
     vehicle_finish_obstacle_scan(&unresolved, request);
-    assert(work() == TMO_FEVR && vehicle_state() == VC_FAULT);
+    assert(work() > 0 && vehicle_state() == VC_AVOIDING);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_phase == S5_WAIT_PATH &&
+           snapshot.avoidance_failure == S5_FAIL_ECHO && snapshot.avoidance_failed_phase == S5_PROFILE_PATH);
     vehicle_submit_obstacle_range(606);
     vehicle_request_stop();
     work();
-    assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_IDLE && snapshot.obstacle_profile);
-    assert(snapshot.near_mm == 208 && snapshot.obstacle_forward_mm == 606 &&
-           snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_ECHO &&
-           snapshot.avoidance_failed_phase == S5_PROFILE_PATH);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_IDLE && snapshot.obstacle_profile &&
+           snapshot.start_block == VC_START_STOP_PENDING);
+    assert(snapshot.near_mm == 208 && snapshot.obstacle_forward_mm == 606 && snapshot.width_mm == S5_UNKNOWN_WIDTH);
     motor_stopped();
     work();
     assert(vehicle_request_reset());
@@ -234,16 +243,12 @@ int main(void)
     work();
     assert(vehicle_get_snapshot(&snapshot) && !snapshot.obstacle_profile &&
            snapshot.avoidance_failure == S5_FAIL_NONE && reset_count == 4 && reset_result);
-    /* A fresh right-side clearance allows a pivot even with a single target hit. */
+    /* START with a close obstacle requests avoidance directly from standstill. */
     vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
-    assert(vehicle_request_start());
-    work();
-    motor_acknowledge(S2_REPLY_OK);
-    work();
     vehicle_submit_obstacle_range(208);
-    work();
-    motor_stopped();
-    work();
+    unsigned before_start = command_count;
+    assert(vehicle_request_start());
+    assert(work() > 0 && vehicle_state() == VC_AVOIDING && command_count == before_start);
     assert(vehicle_obstacle_scan_request(&request));
     unresolved.right_path_mm = S5_OPEN_RANGE;
     clock_ms += 20;
@@ -256,5 +261,5 @@ int main(void)
     assert(work() > 0 && right_turn_count == 1);
     assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_phase == S5_TURN_OUT &&
            snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_NONE);
-    puts("PASS controller events, echo retry, stopped reset and right pivot with partial profile");
+    puts("PASS START with missing echo or a close obstacle, automatic recovery, STOP and right pivot");
 }

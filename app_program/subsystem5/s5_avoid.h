@@ -11,6 +11,7 @@
 #define S5_MAX_PASS_MM 500u
 #define S5_APPROACH_RPM 20u
 #define S5_BYPASS_TURN_DEG 45u
+#define S5_LATERAL_TURN_DEG 90u
 #define S5_TURN_CLEARANCE_MM 100u
 #define S5_REVERSE_MM 30u
 #define S5_LONG_REVERSE_MM 60u
@@ -20,7 +21,7 @@
 typedef enum {
     S5_OFF, S5_PROFILE_PATH, S5_TURN_OUT, S5_SHIFT_OUT, S5_ALIGN_OUTSIDE,
     S5_PASS, S5_TURN_IN, S5_FIND_LINE, S5_CENTER_LINE, S5_ALIGN_LINE,
-    S5_ALIGN_RETRY, S5_COMPLETE, S5_FAILED, S5_CHECK_LINE, S5_BACK_UP
+    S5_ALIGN_RETRY, S5_COMPLETE, S5_FAILED, S5_CHECK_LINE, S5_BACK_UP, S5_WAIT_PATH
 } S5_PHASE;
 typedef enum { S5_NO_SIDE, S5_LEFT, S5_RIGHT } S5_SIDE;
 typedef enum { S5_WAIT, S5_STOP, S5_ADVANCE, S5_PIVOT_LEFT, S5_PIVOT_RIGHT, S5_REVERSE, S5_RESCAN } S5_ACTION;
@@ -45,16 +46,21 @@ typedef struct {
 typedef struct {
     uint32_t phase_at, last_line_at;
     unsigned phase:4, side:2, line_samples:2, reverse_available:1;
-    unsigned reverse_long:1, scan_retried:1, failure:4, failed_phase:4;
-    unsigned offset_mm:8, next_pass_mm:9, passed_mm:9;
+    unsigned reverse_long:1, scan_retried:1, turn_90:1, failure:4, failed_phase:4;
+    unsigned offset_mm:9, next_pass_mm:9, passed_mm:9;
 } S5_AVOID;
 typedef struct {
     uint16_t action : 3;
-    uint16_t distance_mm : 9;
+    uint16_t turn_90 : 1;
+    uint16_t distance_mm : 10;
 } S5_AVOID_OUTPUT;
 
-S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned *pass_mm,
-                       S5_FAILURE *failure);
+typedef struct {
+    unsigned side:2, failure:4, turn_90:1;
+    unsigned offset_mm:9, pass_mm:9;
+} S5_BYPASS;
+
+S5_BYPASS s5_plan_bypass(const S5_PROFILE *profile);
 unsigned s5_diagonal_mm(unsigned lateral_mm);
 unsigned s5_reentry_detection_mm(unsigned offset_mm, unsigned sensor_to_axle_mm);
 void s5_avoid_begin(S5_AVOID *state, uint32_t now);
