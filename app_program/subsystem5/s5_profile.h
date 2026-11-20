@@ -33,7 +33,7 @@ typedef enum {
 
 typedef struct {
     unsigned nearest_mm : 12;
-    unsigned width_mm : 11; /* Distance between the two obstacle edge echoes. */
+    unsigned width_mm : 11; /* Edge-to-edge estimate or observed span for an incomplete sweep. */
     unsigned front_mm : 9; /* Nearest longitudinal projection, capped at 511 mm. */
     unsigned left_mm : 12;
     unsigned right_mm : 12;
@@ -43,7 +43,7 @@ typedef struct {
     unsigned width_status : 3;
     unsigned left_clipped : 1;
     unsigned right_clipped : 1;
-    signed left_edge_mm : 13; /* Outer sweep bounds used by the motion planner. */
+    signed left_edge_mm : 13; /* Bracketed edge or outermost observed lateral return (see valid bits). */
     signed right_edge_mm : 13;
     unsigned left_edge_valid : 1;
     unsigned right_edge_valid : 1;

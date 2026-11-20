@@ -80,8 +80,16 @@ static void reach_inward_turn(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out, boo
     S5_ACTION inward = left ? S5_PIVOT_RIGHT : S5_PIVOT_LEFT;
     S5_PROFILE scan = obstacle(left);
     if (open_side) {
-        if (left) scan.left_path_mm = S5_OPEN_RANGE;
-        else scan.right_path_mm = S5_OPEN_RANGE;
+        scan.width_mm = S5_UNKNOWN_WIDTH;
+        if (left) {
+            scan.left_path_mm = S5_OPEN_RANGE;
+            scan.right_clipped = true;
+            scan.right_edge_valid = false;
+        } else {
+            scan.right_path_mm = S5_OPEN_RANGE;
+            scan.left_clipped = true;
+            scan.left_edge_valid = false;
+        }
     }
     profile(model, in, out, scan);
     assert(model->avoidance.side == (left ? S5_LEFT : S5_RIGHT));
@@ -230,7 +238,7 @@ static void test_width_and_diagonal_clearance(void)
     assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_ROOM);
     scan.front_mm = S5_SCAN_STOP_MM;
     scan.width_mm = S5_UNKNOWN_WIDTH;
-    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_WIDTH);
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_LEFT && offset == 185);
     scan = obstacle(true);
     scan.left_path_mm = S5_UNKNOWN_RANGE;
     assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_RIGHT);
@@ -241,13 +249,42 @@ static void test_width_and_diagonal_clearance(void)
     assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_SIDE);
 }
 
+static void test_bypass_with_estimated_edges(void)
+{
+    S5_PROFILE scan = obstacle(true);
+    scan.left_edge_valid = scan.right_edge_valid = false;
+    scan.left_edge_mm = -35;
+    scan.right_edge_mm = 20;
+    scan.width_mm = 55;
+    scan.left_path_mm = 650;
+    scan.right_path_mm = 730;
+
+    unsigned offset, pass;
+    S5_FAILURE reason;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_RIGHT);
+    assert(offset == 180 && pass == 170 && reason == S5_FAIL_NONE);
+
+    scan.left_path_mm = S5_OPEN_RANGE;
+    scan.right_path_mm = S5_UNKNOWN_RANGE;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_LEFT);
+    assert(offset == 195 && pass == 155);
+
+    scan.left_path_mm = 220;
+    scan.right_path_mm = s5_diagonal_mm(180) + S5_MANEUVER_STOP_MM - 1;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_SIDE);
+
+    scan.left_clipped = scan.right_clipped = true;
+    scan.left_path_mm = scan.right_path_mm = S5_OPEN_RANGE;
+    assert(s5_plan_bypass(&scan, &offset, &pass, &reason) == S5_NO_SIDE && reason == S5_FAIL_BOTH_LIMITS);
+}
+
 static void test_stationary_retry(void)
 {
     VC_MODEL model = {0};
     VC_INPUT in = track_input();
     VC_OUTPUT out;
     S5_PROFILE scan = obstacle(true);
-    scan.width_mm = S5_UNKNOWN_WIDTH;
+    scan.left_path_mm = scan.right_path_mm = S5_UNKNOWN_RANGE;
     profile(&model, &in, &out, scan);
     assert(out.maneuver.action == S5_RESCAN && model.avoidance.phase == S5_PROFILE_PATH);
     step(&model, &in, &out, 20);
@@ -353,11 +390,12 @@ int main(void)
     test_unsafe_profile_and_scan_timeout();
     test_reentry_limit();
     test_width_and_diagonal_clearance();
+    test_bypass_with_estimated_edges();
     test_stationary_retry();
     test_clipped_scan(false);
     test_clipped_scan(true);
     test_departure_room_after_retrace();
     test_reverse_and_rescan(true);
     test_reverse_and_rescan(false);
-    puts("PASS obstacle avoidance, both sides, blocked return retry, recovery, and cancellation");
+    puts("PASS both bypass directions with partial profiles, clearance checks, line recovery and cancellation");
 }

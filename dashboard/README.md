@@ -90,7 +90,7 @@ Connect the scan servo to the Robo Pico servo header marked **GP12**. At power-u
 Open the firmware's USB serial console at 115200 baud. The controller slows at 350 mm and stops to scan at 220 mm. The servo confirms the forward target, brackets both edges for the width estimate, samples the two 45° departure headings, then returns to centre. The dashboard keeps the latest sweep until Reset or the next detour. **Forward now** shows the current straight-ahead reading separately.
 
 - `confirming forward target before GP12 coarse sweep` means the scan task started the sweep.
-- `width=unavailable` gives the specific face or edge evidence that failed. The integrated USB serial log prints the sampled `[S5] width echo` bearings for that sweep. An inconclusive result gets one stationary retry. The dashboard reports the reason and phase if the detour stops.
+- `estimated_width=...` reports the observed lateral span from a partial sweep. `width=unavailable` means the sweep provided no usable width estimate. The USB serial log includes the sampled `[S5] width echo` bearings for both cases. The planner can depart on either side with verified clearance. The dashboard reports the reason and phase if the detour stops.
 - `[S5] profile ... width=...` confirms width was calculated on the Pico. `[S1 MQTT] /obstacle queued ... width=...` confirms the frame reached the local MQTT queue. Use the dashboard's topic root and subscribe to the broker to verify delivery. The payload is binary.
 
 ```sh

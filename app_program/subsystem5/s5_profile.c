@@ -168,6 +168,8 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
     unsigned near = anchor;
     unsigned reference = s5_scan_get(scan, anchor);
     unsigned front = reference;
+    int left_hit = lateral_mm(anchor, reference);
+    int right_hit = left_hit;
     for (unsigned i = left.last_hit; i <= right.last_hit; ++i) {
         unsigned range = s5_scan_get(scan, i);
         if (!s5_same_obstacle(range, reference)) continue;
@@ -177,12 +179,19 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
             near = i;
         unsigned forward = project_forward_mm(i, range);
         if (forward < front) front = forward;
+        int lateral = lateral_mm(i, range);
+        if (lateral < left_hit) left_hit = lateral;
+        if (lateral > right_hit) right_hit = lateral;
     }
+    unsigned span = (unsigned)(right_hit - left_hit);
+    if (observed_span_mm) *observed_span_mm = span;
     S5_PROFILE result = {
         .nearest_mm = s5_scan_get(scan, near),
         .angle_offset_deg = S5_MAX_ANGLE - s5_scan_bearing(near),
         .front_mm = front < S5_MAX_PROJECTED_FRONT_MM ? front : S5_MAX_PROJECTED_FRONT_MM,
-        .width_mm = S5_UNKNOWN_WIDTH,
+        .width_mm = span > 0 && span <= MAX_WIDTH_MM ? span : S5_UNKNOWN_WIDTH,
+        .left_edge_mm = left_hit,
+        .right_edge_mm = right_hit,
         .left_mm = left.clearance,
         .right_mm = right.clearance,
         .left_path_mm = S5_UNKNOWN_RANGE,
@@ -201,20 +210,16 @@ S5_PROFILE s5_profile(const S5_SCAN *scan, unsigned first, unsigned last, unsign
         result.right_edge_mm = edge_bound_mm(right.boundary, depth);
         result.right_edge_valid = true;
     }
-    unsigned left_range = s5_scan_get(scan, left.last_hit);
-    unsigned right_range = s5_scan_get(scan, right.last_hit);
-    int left_hit = lateral_mm(left.last_hit, left_range);
-    int right_hit = lateral_mm(right.last_hit, right_range);
-    int span = right_hit - left_hit;
-    if (observed_span_mm) *observed_span_mm = span > 0 ? (unsigned)span : 0u;
-    /* The width estimate is independent of the conservative motion bounds. */
+    /* An incomplete sweep can still report the observed lateral span. */
     if (!result.left_edge_valid || !result.right_edge_valid) {
         result.width_status = result.left_edge_valid ? S5_WIDTH_RIGHT_EDGE :
                               result.right_edge_valid ? S5_WIDTH_LEFT_EDGE : S5_WIDTH_BOTH_EDGES;
         return result;
     }
     /* Use the outermost obstacle hits. The adjacent background returns confirm the edges. */
-    unsigned width = width_between_echoes_mm(left_range, right_range, right.last_hit - left.last_hit);
+    unsigned width = width_between_echoes_mm(s5_scan_get(scan, left.last_hit),
+                                             s5_scan_get(scan, right.last_hit),
+                                             right.last_hit - left.last_hit);
     if (width > 0 && width <= MAX_WIDTH_MM) result.width_mm = width;
     else result.width_status = S5_WIDTH_UNRESOLVED;
     return result;

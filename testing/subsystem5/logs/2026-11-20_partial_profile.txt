@@ -1,0 +1,19 @@
+Host regressions (GCC on Windows)
+
+PASS echo capture, scan packing, partial width estimates, sweep limits and bench background replay
+PASS both bypass directions with partial profiles, clearance checks, line recovery and cancellation
+PASS controller events, echo retry, stopped reset and right pivot with partial profile
+
+Dashboard telemetry unit tests
+
+...............
+----------------------------------------------------------------------
+Ran 15 tests in 0.009s
+
+OK
+
+Pico W firmware builds (Arm GNU 15.2.1, Pico SDK 2.3.1)
+
+PASS Pico W integrated mtk3pico_smp1_usb_cdc_wifi_lwip_mqtt_nos4.uf2 (737280 bytes)
+PASS Pico W self-test mtk3pico_smp1_usb_cdc_wifi_nos4_test.uf2 (623616 bytes)
+PASS Pico W servo-bench mtk3pico_smp1_usb_cdc_s5bench.uf2 (206336 bytes)

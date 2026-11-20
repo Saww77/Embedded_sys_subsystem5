@@ -22,8 +22,8 @@ EXPORT void subsystem5_test(void)
                profile.right_mm == S5_OPEN_RANGE && profile.right_edge_valid,
                "profile distinguishes an open side from an electrical fault");
     profile = s5_profile(&samples, S5_CENTRE_INDEX, S5_CENTRE_INDEX + 5, S5_CENTRE_INDEX, 0);
-    TEST_CHECK("S5-U02", profile.width_mm == S5_UNKNOWN_WIDTH,
-               "a clipped scan does not claim an obstacle width");
+    TEST_CHECK("S5-U02", profile.width_mm == 53 && profile.width_status == S5_WIDTH_LEFT_EDGE &&
+               !profile.left_edge_valid, "a partial sweep estimates the observed span");
     unsigned char packet[7];
     TEST_CHECK("S5-U03", s1_wire_obstacle(packet, 140, 2047, 4095, 655, 43) &&
                s1_wire_get(packet, 47, 7) == 13 && s1_wire_get(packet, 54, 2) == 0 &&

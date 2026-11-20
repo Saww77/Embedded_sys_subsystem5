@@ -1,6 +1,7 @@
 #include "s5_avoid.h"
 
 #define BODY_MARGIN_MM 135u
+#define ESTIMATED_EDGE_MARGIN_MM 25u
 #define FRONT_MARGIN_MM 15u
 #define MAX_OFFSET_MM (S5_CLEAR_MM - FRONT_MARGIN_MM)
 #define FOLLOW_AHEAD_MARGIN_MM 130u
@@ -63,9 +64,20 @@ unsigned s5_reentry_detection_mm(unsigned offset_mm, unsigned sensor_to_axle_mm)
     return search_mm > sensor_to_axle_mm ? search_mm - sensor_to_axle_mm : 0;
 }
 
+static unsigned bypass_offset(int lateral_extent, bool edge_valid)
+{
+    unsigned extent = lateral_extent > 0 ? (unsigned)lateral_extent : 0u;
+    return BODY_MARGIN_MM + extent + (edge_valid ? 0u : ESTIMATED_EDGE_MARGIN_MM);
+}
+
 static bool departure_room(unsigned offset, unsigned front)
 {
     return offset <= MAX_OFFSET_MM && offset + FRONT_MARGIN_MM <= front;
+}
+
+static bool departure_clear(unsigned path, unsigned offset)
+{
+    return s5_range_available(path) && path >= s5_diagonal_mm(offset) + S5_MANEUVER_STOP_MM;
 }
 
 S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned *pass_mm,
@@ -75,28 +87,23 @@ S5_SIDE s5_plan_bypass(const S5_PROFILE *profile, unsigned *offset_mm, unsigned 
     if (!s5_range_measured(profile->nearest_mm) || profile->nearest_mm > S5_CLEAR_MM)
         return S5_NO_SIDE;
 
-    *failure = S5_FAIL_WIDTH;
-    if (!profile->left_edge_valid || !profile->right_edge_valid ||
-        !profile->width_mm || profile->width_mm == S5_UNKNOWN_WIDTH) {
-        if (profile->left_clipped && profile->right_clipped) *failure = S5_FAIL_BOTH_LIMITS;
+    /* Each side needs its own room and 45-degree clearance. Width is telemetry. */
+    unsigned left_offset = bypass_offset(-profile->left_edge_mm, profile->left_edge_valid);
+    unsigned right_offset = bypass_offset(profile->right_edge_mm, profile->right_edge_valid);
+    bool left_room = !profile->left_clipped && departure_room(left_offset, profile->front_mm);
+    bool right_room = !profile->right_clipped && departure_room(right_offset, profile->front_mm);
+    unsigned left_path = profile->left_path_mm, right_path = profile->right_path_mm;
+    bool left = left_room && departure_clear(left_path, left_offset);
+    bool right = right_room && departure_clear(right_path, right_offset);
+    if (!left && !right) {
+        if ((left_room && !s5_range_available(left_path)) ||
+            (right_room && !s5_range_available(right_path))) *failure = S5_FAIL_ECHO;
+        else if (profile->left_clipped && profile->right_clipped) *failure = S5_FAIL_BOTH_LIMITS;
         else if (profile->left_clipped) *failure = S5_FAIL_LEFT_LIMIT;
         else if (profile->right_clipped) *failure = S5_FAIL_RIGHT_LIMIT;
+        else *failure = left_room || right_room ? S5_FAIL_SIDE : S5_FAIL_ROOM;
         return S5_NO_SIDE;
     }
-
-    unsigned left_offset = BODY_MARGIN_MM + (profile->left_edge_mm < 0 ? -profile->left_edge_mm : 0);
-    unsigned right_offset = BODY_MARGIN_MM + (profile->right_edge_mm > 0 ? profile->right_edge_mm : 0);
-    bool left = departure_room(left_offset, profile->front_mm);
-    bool right = departure_room(right_offset, profile->front_mm);
-    *failure = S5_FAIL_ROOM;
-    if (!left && !right) return S5_NO_SIDE;
-
-    unsigned left_path = profile->left_path_mm, right_path = profile->right_path_mm;
-    *failure = (left && !s5_range_available(left_path)) || (right && !s5_range_available(right_path)) ?
-               S5_FAIL_ECHO : S5_FAIL_SIDE;
-    left = left && s5_range_available(left_path) && left_path >= s5_diagonal_mm(left_offset) + S5_MANEUVER_STOP_MM;
-    right = right && s5_range_available(right_path) && right_path >= s5_diagonal_mm(right_offset) + S5_MANEUVER_STOP_MM;
-    if (!left && !right) return S5_NO_SIDE;
 
     *failure = S5_FAIL_NONE;
     bool use_left = left && (!right || left_path > right_path ||
@@ -142,8 +149,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
             state->next_pass_mm = pass;
             return go(state, S5_TURN_OUT, in->now);
         }
-        if (!state->scan_retried && (reason == S5_FAIL_TARGET || reason == S5_FAIL_WIDTH ||
-                                    reason == S5_FAIL_ECHO)) {
+        if (!state->scan_retried && (reason == S5_FAIL_TARGET || reason == S5_FAIL_ECHO)) {
             state->scan_retried = true;
             go(state, S5_PROFILE_PATH, in->now);
             return (S5_AVOID_OUTPUT){.action = S5_RESCAN};

@@ -71,6 +71,8 @@ static void test_scan_and_profile(void)
     _Static_assert(sizeof(S5_SCAN) == 38, "Pack the 25 12-bit samples into 38 bytes");
     assert(s5_servo_angle(0) == 150);
     assert(s5_servo_angle(S5_CENTRE_INDEX * S5_FINE_STEP) == 90);
+    assert(s5_scan_bearing(S5_CENTRE_INDEX + 9) == 45);  /* R, right */
+    assert(s5_scan_bearing(S5_CENTRE_INDEX - 9) == 135); /* T, left */
     S5_SCAN scan = {0};
     for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) {
         s5_scan_set(&scan, i, 4000 + i);
@@ -94,15 +96,16 @@ static void test_scan_and_profile(void)
     assert(profile.left_edge_valid && profile.right_edge_valid);
     s5_scan_set(&scan, 14, S5_UNKNOWN_RANGE);
     profile = s5_profile(&scan, 10, 14, 12, 0);
-    assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
+    assert(profile.width_mm == 25 && !profile.right_edge_valid);
+    assert(profile.width_status == S5_WIDTH_RIGHT_EDGE && profile.right_edge_mm == 13);
     s5_scan_set(&scan, 15, 550);
     profile = s5_profile(&scan, 10, 15, 12, 0);
     assert(profile.width_mm == 27 && profile.right_mm == 550);
     assert(profile.right_edge_valid && profile.right_edge_mm == 40);
     s5_scan_set(&scan, 15, 30); /* A much closer return cannot bracket the far edge. */
-    s5_scan_set(&scan, 16, 550); /* This is too far from the last hit to estimate width. */
+    s5_scan_set(&scan, 16, 550); /* Too far from the last hit to confirm the edge. */
     profile = s5_profile(&scan, 10, 16, 12, 0);
-    assert(profile.width_mm == S5_UNKNOWN_WIDTH && !profile.right_edge_valid);
+    assert(profile.width_mm == 25 && !profile.right_edge_valid);
 }
 
 static void test_observed_span_without_clearance(void)
@@ -110,12 +113,13 @@ static void test_observed_span_without_clearance(void)
     S5_SCAN scan = {0};
     for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&scan, i, S5_UNKNOWN_RANGE);
     for (unsigned i = 8; i <= 15; ++i) s5_scan_set(&scan, i, 176);
-    s5_scan_set(&scan, 8, 189); /* 70 degrees, the last hit on the left */
+    s5_scan_set(&scan, 8, 189); /* 110 degrees, the last hit on the left */
     unsigned span = 0;
     S5_PROFILE profile = s5_profile(&scan, 5, 18, S5_CENTRE_INDEX, &span);
     assert(span == 109 && profile.nearest_mm == 176);
-    assert(profile.width_mm == S5_UNKNOWN_WIDTH);
+    assert(profile.width_mm == span && profile.width_status == S5_WIDTH_BOTH_EDGES);
     assert(!profile.left_edge_valid && !profile.right_edge_valid);
+    assert(profile.left_edge_mm == -64 && profile.right_edge_mm == 45);
     profile = s5_profile(&scan, S5_CENTRE_INDEX, S5_CENTRE_INDEX, S5_CENTRE_INDEX, &span);
     assert(span == 0 && profile.width_mm == S5_UNKNOWN_WIDTH);
 }
@@ -214,7 +218,7 @@ static void test_narrow_face_at_track_distance(void)
 
     s5_scan_set(&scan, 20, 219);
     profile = s5_profile(&scan, 3, 20, S5_CENTRE_INDEX, NULL);
-    assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_RIGHT_EDGE);
+    assert(profile.width_mm == 281 && profile.width_status == S5_WIDTH_RIGHT_EDGE);
 }
 
 static void test_track_left_limit(void)
@@ -230,7 +234,7 @@ static void test_track_left_limit(void)
         for (unsigned i = 0; i < S5_SCAN_POINTS; ++i) s5_scan_set(&scan, i, sweep[pass][i]);
         assert(s5_scan_target(&scan) == S5_CENTRE_INDEX);
         S5_PROFILE profile = s5_profile(&scan, 0, S5_SCAN_POINTS - 1, S5_CENTRE_INDEX, NULL);
-        assert(profile.width_mm == S5_UNKNOWN_WIDTH && profile.width_status == S5_WIDTH_LEFT_EDGE);
+        assert(profile.width_mm == (pass == 0 ? 399 : 402) && profile.width_status == S5_WIDTH_LEFT_EDGE);
         assert(profile.left_clipped && !profile.right_clipped);
         assert(!profile.left_edge_valid && profile.right_edge_valid);
         assert(profile.nearest_mm == 218 && profile.right_mm == sweep[pass][24]);
@@ -300,5 +304,5 @@ int main(void)
     test_track_left_limit();
     test_bench_background_returns();
     test_80_mm_bench_target_with_unstable_corner_ranges();
-    puts("PASS echo capture, scan packing, dropouts, width, sweep limits and bench background replay");
+    puts("PASS echo capture, scan packing, partial width estimates, sweep limits and bench background replay");
 }

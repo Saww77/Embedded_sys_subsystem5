@@ -6,6 +6,7 @@
 static uint32_t clock_ms;
 static unsigned event_flags, stop_count, command_count, scan_count, clear_count, reset_count;
 static bool reset_result;
+static unsigned right_turn_count;
 static unsigned connection = 7;
 static bool motor_busy;
 static S2_STATUS motor;
@@ -69,7 +70,13 @@ bool motion_clear_faults(void) { ++clear_count; return true; }
 bool motion_maneuver(unsigned mm, bool right, uint16_t *command)
 { (void)mm; (void)right; (void)command; assert(0); return false; }
 bool motion_maneuver_turn_45(bool right, uint16_t *command)
-{ (void)right; (void)command; assert(0); return false; }
+{
+    assert(right && !queued_command);
+    ++right_turn_count;
+    *command = queued_command = 1;
+    motor_busy = true;
+    return true;
+}
 bool motion_maneuver_reverse(unsigned mm, uint16_t *command)
 { (void)mm; (void)command; assert(0); return false; }
 void subsystem5_request_scan(void) { ++scan_count; }
@@ -203,7 +210,7 @@ int main(void)
     assert(vehicle_obstacle_scan_request(&request));
 
     S5_PROFILE unresolved = {.nearest_mm = 208, .front_mm = 203, .width_mm = S5_UNKNOWN_WIDTH,
-                             .angle_offset_deg = 60, .left_path_mm = S5_OPEN_RANGE,
+                             .angle_offset_deg = 60, .left_path_mm = S5_UNKNOWN_RANGE,
                              .right_path_mm = S5_UNKNOWN_RANGE};
     uint32_t first_request = request;
     clock_ms += 20;
@@ -217,7 +224,7 @@ int main(void)
     work();
     assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_IDLE && snapshot.obstacle_profile);
     assert(snapshot.near_mm == 208 && snapshot.obstacle_forward_mm == 606 &&
-           snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_WIDTH &&
+           snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_ECHO &&
            snapshot.avoidance_failed_phase == S5_PROFILE_PATH);
     motor_stopped();
     work();
@@ -227,5 +234,27 @@ int main(void)
     work();
     assert(vehicle_get_snapshot(&snapshot) && !snapshot.obstacle_profile &&
            snapshot.avoidance_failure == S5_FAIL_NONE && reset_count == 4 && reset_result);
-    puts("PASS controller events, stationary rescan, preserved failure and profile, and stopped reset");
+    /* A fresh right-side clearance allows a pivot even with a single target hit. */
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    assert(vehicle_request_start());
+    work();
+    motor_acknowledge(S2_REPLY_OK);
+    work();
+    vehicle_submit_obstacle_range(208);
+    work();
+    motor_stopped();
+    work();
+    assert(vehicle_obstacle_scan_request(&request));
+    unresolved.right_path_mm = S5_OPEN_RANGE;
+    clock_ms += 20;
+    vehicle_finish_obstacle_scan(&unresolved, request);
+    assert(work() > 0 && vehicle_state() == VC_AVOIDING && !right_turn_count);
+
+    clock_ms += 260;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    vehicle_submit_obstacle_range(208);
+    assert(work() > 0 && right_turn_count == 1);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_phase == S5_TURN_OUT &&
+           snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_NONE);
+    puts("PASS controller events, echo retry, stopped reset and right pivot with partial profile");
 }
