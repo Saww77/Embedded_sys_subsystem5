@@ -153,6 +153,10 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(commands, [(self.d.root + '/command', b'\x01', 0, False)] * 2)
         packet[1] = 3
         self.send('controller', packet)
+        self.send('avoidance', b'\x01')
+        state = self.d.snapshot()
+        self.assertEqual(state['telemetry']['controller']['data']['start_block_label'],
+                         'Checking the forward echo')
         self.send('avoidance', b'\x0f\x16\xff\x0f')
         state = self.d.snapshot()
         self.assertTrue(state['start_allowed'])

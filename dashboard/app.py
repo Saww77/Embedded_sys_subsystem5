@@ -20,7 +20,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from mqtt_protocol import (AVOIDANCE_FAILED, AVOIDANCE_WAIT_PATH, START_BLOCK_OBSTACLE,
+from mqtt_protocol import (AVOIDANCE_FAILED, AVOIDANCE_PROFILING, AVOIDANCE_WAIT_PATH, START_BLOCK_OBSTACLE,
                            TELEMETRY_TOPICS, VEHICLE_FAULT_NO_ECHO, command_payload, decode_telemetry)
 
 HEARTBEAT_TIMEOUT = 15.0
@@ -232,12 +232,18 @@ class Dashboard:
                 diagnostics = current["data"]
                 if diagnostics["state"] in ("AVOIDING", "RECOVER_LINE"):
                     waiting = avoidance["fresh"] and avoidance["data"]["phase"] == AVOIDANCE_WAIT_PATH
-                    current["data"] = dict(
-                        diagnostics,
-                        start_block_label="Waiting to verify a route" if waiting else "Automatic avoidance active",
-                        start_hint=("The car will check again and continue when it has clearance." if waiting
-                                    else "The car will continue the run automatically."),
-                    )
+                    checking_forward = (echo_fault and avoidance["fresh"] and
+                                        avoidance["data"]["phase"] == AVOIDANCE_PROFILING)
+                    if checking_forward:
+                        label = "Checking the forward echo"
+                        hint = "The sweep is saved. The centred sensor is rechecking the space ahead."
+                    elif waiting:
+                        label = "Waiting to verify a route"
+                        hint = "The car will check again and continue when it has clearance."
+                    else:
+                        label = "Automatic avoidance active"
+                        hint = "The car will continue the run automatically."
+                    current["data"] = dict(diagnostics, start_block_label=label, start_hint=hint)
                 elif diagnostics["obstacle_blocked"]:
                     current["data"] = dict(
                         diagnostics,

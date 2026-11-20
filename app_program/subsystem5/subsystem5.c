@@ -137,6 +137,19 @@ static unsigned scan_edge(S5_SCAN *samples, unsigned anchor, unsigned reference,
     return (unsigned)index;
 }
 
+/* The last sweep bearing can be far from centre. Give the forward reading
+   several chances after settling, and feed each ping through the range gate. */
+static void refresh_forward(uint32_t request)
+{
+    for (unsigned attempt = 0; attempt < 3u; ++attempt) {
+        if (!vehicle_obstacle_scan_current(request)) return;
+        unsigned range = s5_hw_ping().range_mm;
+        vehicle_submit_obstacle_range(range);
+        if (s5_range_measured(range)) return;
+        if (attempt + 1u < 3u) tk_dly_tsk(PING_INTERVAL_MS);
+    }
+}
+
 static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *request)
 {
     const char *tag = verbose ? "[S5 BENCH]" : "[S5]";
@@ -188,7 +201,7 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     profile->right_path_mm = read_at(S5_CENTRE_INDEX + BYPASS_SCAN_STEPS, verbose, true, S5_UNKNOWN_RANGE);
     if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
     aim(S5_CENTRE_ANGLE);
-    if (request) vehicle_submit_obstacle_range(s5_hw_ping().range_mm);
+    if (request) refresh_forward(*request);
     tm_printf((UB*)"%s paths T(left %u deg)=%u mm R(right %u deg)=%u mm (4094=open, 4095=unavailable)\n",
               tag, S5_CENTRE_ANGLE + S5_BYPASS_TURN_DEG, (unsigned)profile->left_path_mm,
               S5_CENTRE_ANGLE - S5_BYPASS_TURN_DEG, (unsigned)profile->right_path_mm);

@@ -155,9 +155,10 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
     bool range_fresh = in->range_valid && in->now - in->range_at <= S5_RANGE_MAX_AGE_MS;
     if (in->motion == S5_MOTION_FAILED) return fail(state, S5_FAIL_MOTION, in->now);
     if (phase == S5_WAIT_PATH) {
-        if (!in->stopped) return wait;
-        if (range_fresh && in->range_mm > S5_CLEAR_MM &&
-            at_or_after(in->range_at, state->phase_at)) {
+        /* The scan task keeps ranging at 90 degrees while stopped. A new
+           sweep can begin once a current forward range justifies it. */
+        if (!in->stopped || !range_fresh || !at_or_after(in->range_at, state->phase_at)) return wait;
+        if (in->range_mm > S5_CLEAR_MM) {
             clear_path_failure(state);
             return go(state, S5_COMPLETE, in->now);
         }
@@ -180,18 +181,19 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         /* The scan belongs to this stop and has completed with the servo centred. */
         if (!in->profile_valid || in->profile_at == state->phase_at ||
             !at_or_after(in->profile_at, state->phase_at) || !in->stopped) return wait;
-        if (in->profile.nearest_mm == S5_OPEN_RANGE) {
-            if (!range_fresh) return wait;
-            if (in->range_mm > S5_CLEAR_MM) {
-                clear_path_failure(state);
-                return go(state, S5_COMPLETE, in->now);
-            }
+        /* Keep a completed obstacle profile while centered pings recover.
+           Side clearance and the sweep's nearest hit do not measure the
+           space in front of the chassis at departure time. */
+        bool has_result = s5_range_available(in->profile.nearest_mm);
+        if (has_result && !range_fresh) return wait;
+        if (range_fresh && in->range_mm > S5_CLEAR_MM) {
+            clear_path_failure(state);
+            return go(state, S5_COMPLETE, in->now);
         }
         S5_PROFILE profile = in->profile;
         if (range_fresh && in->range_mm < profile.front_mm) profile.front_mm = in->range_mm;
         S5_BYPASS plan = s5_plan_bypass(&profile);
         if (plan.side != S5_NO_SIDE) {
-            if (!range_fresh) return wait;
             clear_path_failure(state);
             state->side = plan.side;
             state->turn_90 = plan.turn_90;

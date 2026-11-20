@@ -15,6 +15,7 @@ AVOIDANCE_PHASES = (
     'Checking the rejoined path', 'Reversing to rescan', 'Waiting to verify a route',
 )
 AVOIDANCE_SIDES = (None, 'Left', 'Right')
+AVOIDANCE_PROFILING = 1
 AVOIDANCE_FAILED = 12
 AVOIDANCE_WAIT_PATH = 15
 AVOIDANCE_FAILURES = (

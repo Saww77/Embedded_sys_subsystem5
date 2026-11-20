@@ -216,6 +216,13 @@ static void test_unsafe_profile_and_scan_timeout(void)
     step(&model, &in, &out, 14000);
     assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_WAIT_PATH &&
            model.avoidance.failure == S5_FAIL_SCAN_TIMEOUT && model.state == VC_AVOIDING);
+    in.avoidance.range_valid = false;
+    step(&model, &in, &out, 1000);
+    assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_WAIT_PATH);
+    in.avoidance.range_valid = true;
+    in.avoidance.range_mm = 196;
+    step(&model, &in, &out, 20);
+    assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_PROFILE_PATH);
 }
 
 static void test_reentry_limit(void)

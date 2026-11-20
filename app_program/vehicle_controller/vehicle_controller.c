@@ -265,7 +265,7 @@ BOOL vehicle_get_snapshot(VEHICLE_SNAPSHOT *out)
     out->start_pending=pending.start;out->stop_pending=pending.stop;out->reset_pending=pending.reset;
     out->obstacle_blocked = obstacle_blocked(out->timestamp_ms);
     out->obstacle_no_echo = pending.obstacle_monitor && !range_valid(out->timestamp_ms) &&
-                            model.avoidance.phase != S5_PROFILE_PATH;
+                            (model.avoidance.phase != S5_PROFILE_PATH || pending.profile_valid);
     out->avoidance_phase = model.avoidance.phase;
     out->avoidance_side = model.avoidance.side;
     out->avoidance_failure = model.avoidance.failure;

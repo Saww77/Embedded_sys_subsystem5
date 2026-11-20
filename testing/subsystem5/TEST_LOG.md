@@ -202,3 +202,7 @@ Host tests on 20 November 2026 verified lateral-span estimates, left and right d
 ## Automatic avoidance from START
 
 The host dispatcher accepted START both with a close range and with a missing echo. A close range began a sweep and sent the chosen pivot without a forward line-follow command first. Two open pulses recovered the waiting mission without another START. Replayed track sweeps with short diagonal clearances selected the R-side lateral departure. A simulated close return after the pivot prevented sideways travel. The local Edge and Mosquitto test exercised the dashboard START and STOP commands with simulated Pico telemetry. All three Pico W builds produced UF2 images. On-car testing is pending. [Test and build output](logs/2026-11-20_automatic_avoidance.txt)
+
+## Missing forward echo after a sweep
+
+The host dispatcher replayed a saved sweep with a 196 mm nearest return, 294 mm estimated width and 208/651 mm left/right departure ranges. A missing forward echo held the vehicle stationary with the servo centred. A fresh forward echo resumed planning from the saved sweep and dispatched a right pivot without requesting another sweep. The planner test also verified that an expired sweep stays in the wait phase during continued echo loss. The integrated Pico W MQTT firmware built successfully. On-car testing is pending. [Test and build output](logs/2026-11-20_forward_echo.txt)

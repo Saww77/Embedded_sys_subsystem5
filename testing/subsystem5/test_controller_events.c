@@ -250,16 +250,28 @@ int main(void)
     assert(vehicle_request_start());
     assert(work() > 0 && vehicle_state() == VC_AVOIDING && command_count == before_start);
     assert(vehicle_obstacle_scan_request(&request));
-    unresolved.right_path_mm = S5_OPEN_RANGE;
+    S5_PROFILE saved = {
+        .nearest_mm = 196, .front_mm = 196, .width_mm = 294, .angle_offset_deg = 60,
+        .left_path_mm = 208, .right_path_mm = 651, .left_edge_mm = -254, .right_edge_mm = 40,
+        .left_edge_valid = true, .right_edge_valid = true,
+    };
+    unsigned scans_before = scan_count;
     clock_ms += 20;
-    vehicle_finish_obstacle_scan(&unresolved, request);
+    vehicle_submit_obstacle_range(S5_UNKNOWN_RANGE);
+    vehicle_finish_obstacle_scan(&saved, request);
     assert(work() > 0 && vehicle_state() == VC_AVOIDING && !right_turn_count);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.obstacle_profile && snapshot.obstacle_no_echo);
+    clock_ms += 500;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    assert(work() > 0 && scan_count == scans_before && !right_turn_count);
+    vehicle_submit_obstacle_range(196);
+    assert(work() > 0 && scan_count == scans_before && !right_turn_count);
 
     clock_ms += 260;
     vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
-    vehicle_submit_obstacle_range(208);
+    vehicle_submit_obstacle_range(196);
     assert(work() > 0 && right_turn_count == 1);
     assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_phase == S5_TURN_OUT &&
-           snapshot.width_mm == S5_UNKNOWN_WIDTH && snapshot.avoidance_failure == S5_FAIL_NONE);
-    puts("PASS START with missing echo or a close obstacle, automatic recovery, STOP and right pivot");
+           snapshot.width_mm == 294 && snapshot.avoidance_failure == S5_FAIL_NONE);
+    puts("PASS START, STOP, echo recovery and right pivot from a saved sweep without rescanning");
 }
