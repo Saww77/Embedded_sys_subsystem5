@@ -20,6 +20,7 @@ bool s2_core_turn_left(unsigned steps);
 bool s2_core_turn_right(unsigned steps);
 bool s2_core_maneuver(unsigned arg);
 bool s2_core_distance_reached(unsigned mm, const S2_STATUS *status);
+unsigned s2_core_distance_travelled_mm(const S2_STATUS *status);
 bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status);
 void s2_core_stop(void);
 bool s2_core_busy(void);

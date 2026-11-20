@@ -326,9 +326,12 @@ static void test_lateral_bypass_at_start(void)
     VC_MODEL blocked = model;
     VC_INPUT near = in;
     near.avoidance.range_mm = 300;
+    start_move(&blocked, &near, &out, S5_ADVANCE, 81);
+    end_move(&blocked, &near, &out);
+    assert(blocked.avoidance.phase == S5_SHIFT_OUT && blocked.avoidance.leg_progress_mm == 81);
+    near.avoidance.range_mm = 219;
     step(&blocked, &near, &out, 260);
-    assert(out.stop && blocked.avoidance.phase == S5_FAILED &&
-           blocked.avoidance.failure == S5_FAIL_CLOSE);
+    assert(out.stop && blocked.avoidance.phase == S5_PROFILE_PATH && blocked.avoidance.depth == 1);
 
     in.avoidance.range_mm = 1000;
     start_move(&model, &in, &out, S5_ADVANCE, 369);
@@ -451,6 +454,123 @@ static void test_close_left_obstacle_with_right_clearance(bool has_retrace)
     assert(out.action == S5_PIVOT_RIGHT);
 }
 
+static void complete_nested_bypass(VC_MODEL *model, VC_INPUT *in, VC_OUTPUT *out,
+                                   bool face_back)
+{
+    assert(model->avoidance.phase == S5_PROFILE_PATH && model->avoidance.depth == 1);
+    assert(!in->avoidance.stopped);
+    step(model, in, out, 20);
+    assert(out->maneuver.action == S5_WAIT && model->avoidance.phase == S5_PROFILE_PATH);
+
+    in->avoidance.stopped = true;
+    in->avoidance.range_mm = 150;
+    in->avoidance.profile = obstacle(false);
+    in->avoidance.profile.nearest_mm = in->avoidance.profile.front_mm = 150;
+    in->avoidance.profile_valid = true;
+    in->avoidance.profile_at = in->avoidance.now + 600;
+    step(model, in, out, 600);
+    assert(model->avoidance.phase == S5_TURN_OUT && model->avoidance.side == S5_RIGHT);
+    start_move(model, in, out, S5_PIVOT_RIGHT, 0);
+    end_move(model, in, out);
+    in->avoidance.range_mm = 1000;
+    start_move(model, in, out, S5_ADVANCE, 175);
+    end_move(model, in, out);
+    start_move(model, in, out, S5_PIVOT_LEFT, 0);
+    end_move(model, in, out);
+    start_move(model, in, out, S5_ADVANCE, 280);
+    end_move(model, in, out);
+    start_move(model, in, out, S5_PIVOT_LEFT, 0);
+    end_move(model, in, out);
+    start_move(model, in, out, S5_ADVANCE, 175);
+    end_move(model, in, out);
+    start_move(model, in, out, face_back ? S5_PIVOT_LEFT : S5_PIVOT_RIGHT, 0);
+    end_move(model, in, out);
+    in->avoidance.profile_valid = false;
+    step(model, in, out, 260); /* No IR hit on the temporary corridor. */
+    assert(model->avoidance.depth == 0);
+}
+
+static void test_obstacle_during_pass(void)
+{
+    VC_MODEL model = {.state = VC_AVOIDING,
+                      .avoidance = {.phase = S5_PASS, .side = S5_LEFT, .offset_mm = 185, .next_pass_mm = 350}};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    start_move(&model, &in, &out, S5_ADVANCE, 350);
+    in.avoidance.range_mm = 200;
+    in.avoidance.travel_mm = 20;
+    in.avoidance.stopped = false;
+    step(&model, &in, &out, 100);
+    assert(out.stop && model.avoidance.phase == S5_PROFILE_PATH && model.avoidance.depth == 1);
+    in.avoidance.motion = S5_MOTION_NONE;
+
+    VC_MODEL cancelled = model;
+    VC_INPUT stopped = in;
+    stopped.stop = true;
+    step(&cancelled, &stopped, &out, 20);
+    assert(out.stop && cancelled.state == VC_IDLE && cancelled.avoidance.phase == S5_FAILED);
+
+    complete_nested_bypass(&model, &in, &out, false);
+    assert(model.avoidance.phase == S5_PASS && model.avoidance.side == S5_LEFT);
+    assert(model.avoidance.offset_mm == 185 && model.avoidance.leg_progress_mm == 300);
+    start_move(&model, &in, &out, S5_ADVANCE, 50);
+    end_move(&model, &in, &out);
+    assert(model.avoidance.phase == S5_TURN_IN && model.avoidance.passed_mm == 350);
+    start_move(&model, &in, &out, S5_PIVOT_RIGHT, 0);
+}
+
+static void test_nested_route_clears_before_the_scan_finishes(void)
+{
+    VC_MODEL model = {.state = VC_AVOIDING,
+                      .avoidance = {.phase = S5_PASS, .side = S5_LEFT, .offset_mm = 185, .next_pass_mm = 350}};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    start_move(&model, &in, &out, S5_ADVANCE, 350);
+    in.avoidance.range_mm = 200;
+    in.avoidance.travel_mm = 80;
+    step(&model, &in, &out, 20);
+    assert(out.stop && model.avoidance.depth == 1);
+
+    in.avoidance.motion = S5_MOTION_NONE;
+    in.avoidance.range_mm = 1000;
+    in.avoidance.profile = (S5_PROFILE){.nearest_mm = S5_OPEN_RANGE};
+    in.avoidance.profile_valid = true;
+    in.avoidance.profile_at = in.avoidance.now + 600;
+    step(&model, &in, &out, 600);
+    assert(model.state == VC_AVOIDING && model.avoidance.phase == S5_PASS && !model.avoidance.depth);
+    start_move(&model, &in, &out, S5_ADVANCE, 270);
+}
+
+static void test_obstacle_during_line_search(void)
+{
+    VC_MODEL model = {.state = VC_RECOVER_LINE,
+                      .avoidance = {.phase = S5_FIND_LINE, .side = S5_LEFT, .offset_mm = 175}};
+    VC_INPUT in = track_input();
+    VC_OUTPUT out;
+    start_move(&model, &in, &out, S5_ADVANCE, 215);
+    in.avoidance.range_mm = 200;
+    in.avoidance.travel_mm = 40;
+    in.avoidance.stopped = false;
+    step(&model, &in, &out, 100);
+    assert(out.stop && model.avoidance.phase == S5_PROFILE_PATH && model.avoidance.depth == 1);
+    in.avoidance.motion = S5_MOTION_NONE;
+    complete_nested_bypass(&model, &in, &out, true);
+
+    assert(model.state == VC_RECOVER_LINE && model.avoidance.phase == S5_FIND_LINE);
+    assert(model.avoidance.side == S5_RIGHT && model.avoidance.offset_mm == 145);
+    start_move(&model, &in, &out, S5_ADVANCE, 185);
+    in.avoidance.near_original_line = in.avoidance.line_hit = true;
+    in.avoidance.line_at = in.avoidance.now + 20;
+    step(&model, &in, &out, 20);
+    in.avoidance.line_at = in.avoidance.now + 20;
+    step(&model, &in, &out, 20);
+    assert(out.stop && model.avoidance.phase == S5_CENTER_LINE);
+    in.avoidance.line_hit = false;
+    start_move(&model, &in, &out, S5_ADVANCE, 60);
+    end_move(&model, &in, &out);
+    start_move(&model, &in, &out, S5_PIVOT_RIGHT, 0);
+}
+
 static void test_next_obstacle_on_return(void)
 {
     VC_MODEL model = {.state = VC_RECOVER_LINE,
@@ -521,8 +641,11 @@ int main(void)
     test_departure_room_after_retrace();
     test_close_left_obstacle_with_right_clearance(true);
     test_close_left_obstacle_with_right_clearance(false);
+    test_obstacle_during_pass();
+    test_nested_route_clears_before_the_scan_finishes();
+    test_obstacle_during_line_search();
     test_next_obstacle_on_return();
     test_reverse_and_rescan(true);
     test_reverse_and_rescan(false);
-    puts("PASS 90-degree detours, left tie-break, line recovery, repeat obstacle and cancellation");
+    puts("PASS 90-degree detours, nested bypass, interrupted leg, tape recovery and cancellation");
 }

@@ -383,6 +383,10 @@ static TMO vehicle_service_once(void)
     VC_INPUT in = controller_input(ready, link_ready(), s2_get_bits(&status, 5, 4), busy, now);
     VC_OUTPUT out;
     in.avoidance.motion = drive_feedback(&status, &reply, busy, now);
+    if (model.avoidance.issued_mm && in.avoidance.motion == S5_MOTION_PENDING) {
+        unsigned travel = s2_core_distance_travelled_mm(&status);
+        in.avoidance.travel_mm = travel <= model.avoidance.issued_mm ? travel : model.avoidance.issued_mm;
+    }
     in.drive_failed = drive.failed;
     unsigned left_measured = s2_get_bits(&status, 9, 9);
     unsigned right_measured = s2_get_bits(&status, 18, 9);
@@ -395,10 +399,12 @@ static TMO vehicle_service_once(void)
 #else
     in.avoidance.line_centered = !in.avoidance.line_hit;
 #endif
-    if (model.avoidance.phase == S5_FIND_LINE &&
+    if (model.avoidance.phase == S5_FIND_LINE && !model.avoidance.depth &&
         (in.avoidance.motion == S5_MOTION_PENDING || in.avoidance.motion == S5_MOTION_DONE)) {
         unsigned min_cross_mm = s5_reentry_detection_mm(model.avoidance.offset_mm, S3_ADVANCE_MM);
-        in.avoidance.near_original_line = s2_core_distance_reached(min_cross_mm, &status);
+        unsigned progress_mm = model.avoidance.leg_progress_mm;
+        in.avoidance.near_original_line = progress_mm >= min_cross_mm ||
+                                       s2_core_distance_reached(min_cross_mm - progress_mm, &status);
     }
     bool straight = model.state == VC_FOLLOW_LINE && in.avoidance.line_centered &&
                     in.left_rpm == in.right_rpm &&
@@ -417,6 +423,7 @@ static TMO vehicle_service_once(void)
     if (pending.start && blocker != VC_START_READY) data.last_start_reject = blocker;
     pending.start = pending.stop = pending.line_stop = false;
     S5_PHASE previous = model.avoidance.phase;
+    unsigned previous_depth = model.avoidance.depth;
     vc_core_step(&model, &in, &out);
     bool reset_done = false, reset_ok = false;
     if (in.reset) {
@@ -441,6 +448,7 @@ static TMO vehicle_service_once(void)
     unsigned side = model.avoidance.side;
     unsigned offset = model.avoidance.offset_mm;
     unsigned pass = model.avoidance.next_pass_mm;
+    unsigned depth = model.avoidance.depth;
     /* Serialize dispatch with the request latch, so STOP can cancel an entire
        batch before any later movement is submitted. */
     submit_output(&in, &out, &reply, vc_core_detouring(&model));
@@ -452,7 +460,8 @@ static TMO vehicle_service_once(void)
         previous != S5_WAIT_PATH && data.obstacle_profile) {
         data.obstacle_profile = data.obstacle_valid = false;
     }
-    bool scan = scan_wanted() && pending.scan == SCAN_OFF && in.avoidance.stopped && !drive.moving;
+    bool scan = scan_wanted() && pending.scan == SCAN_OFF && in.avoidance.stopped && !drive.moving &&
+                out.maneuver.action != S5_STOP;
     if (scan) {
         ++scan_request_id;
         pending.scan = SCAN_READY;
@@ -482,6 +491,8 @@ static TMO vehicle_service_once(void)
 #endif
     if (out.maneuver.action == S5_RESCAN)
         tm_printf((UB*)"[S5] scan inconclusive, retrying while stopped\n");
+    if (previous_depth < depth)
+        tm_printf((UB*)"[S5] new obstacle on detour, scanning from the interrupted leg\n");
     if (previous != phase) {
         tm_printf((UB*)"[S5] avoidance phase=%u side=%u at %u ms: %s\n",
                   (unsigned)phase, side, (unsigned)now, avoidance_phase_name[phase]);

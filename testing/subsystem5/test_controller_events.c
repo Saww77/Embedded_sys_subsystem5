@@ -39,8 +39,10 @@ ER s1_publish_reset_result(BOOL ok) { ++reset_count; reset_result = ok; return E
 uint32_t s2_core_timing_fault_gap_us(void) { return 0; }
 bool s2_core_distance_reached(unsigned mm, const S2_STATUS *status)
 { (void)mm; (void)status; return false; }
+unsigned s2_core_distance_travelled_mm(const S2_STATUS *status)
+{ (void)status; return 55; }
 bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status)
-{ (void)arg; (void)status; return false; }
+{ (void)arg; return s2_get_bits(status, 0, 2) == 0; }
 bool motion_get_feedback(S2_STATUS *status, S2_REPLY *reply, bool *busy)
 {
     *status = motor;
@@ -69,9 +71,12 @@ bool motion_set_wheel_rpm_tracked(unsigned left, unsigned right, uint16_t *comma
 bool motion_clear_faults(void) { ++clear_count; return true; }
 bool motion_maneuver(unsigned mm, bool right, uint16_t *command)
 {
-    assert(!mm && right && !queued_command);
-    ++right_turn_count;
-    *command = queued_command = 1;
+    assert(!queued_command);
+    if (!mm) {
+        assert(right);
+        ++right_turn_count;
+    }
+    *command = queued_command = (uint16_t)(1u + (mm << 4));
     motor_busy = true;
     return true;
 }
@@ -272,5 +277,25 @@ int main(void)
     assert(work() > 0 && right_turn_count == 1);
     assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_phase == S5_TURN_OUT &&
            snapshot.width_mm == 294 && snapshot.avoidance_failure == S5_FAIL_NONE);
-    puts("PASS START, STOP, echo recovery and right pivot from a saved sweep without rescanning");
+    motor_acknowledge(S2_REPLY_OK);
+    work();
+    motor_stopped();
+    work();
+    clock_ms += 260;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    vehicle_submit_obstacle_range(1000);
+    assert(work() > 0 && queued_command && model.avoidance.phase == S5_SHIFT_OUT);
+    motor_acknowledge(S2_REPLY_OK);
+    work();
+
+    scans_before = scan_count;
+    unsigned stops_before = stop_count;
+    vehicle_submit_obstacle_range(200);
+    assert(work() > 0 && stop_count == stops_before + 1 && scan_count == scans_before);
+    assert(!vehicle_obstacle_scan_request(&request));
+    assert(model.avoidance.depth == 1 && model.avoidance.interrupted[0].progress_mm == 55);
+    motor_stopped();
+    assert(work() > 0 && scan_count == scans_before + 1 && vehicle_obstacle_scan_request(&request));
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_AVOIDING);
+    puts("PASS START, saved sweep, echo recovery, and stop-before-scan on a new detour obstacle");
 }

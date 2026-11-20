@@ -10,6 +10,8 @@ The scan task owns GP16 (10 µs minimum trigger), GP17 (3.3 V echo input), and G
 4. The car picks the clearer usable side and favours T when both side readings are equal. It turns 90°, verifies live range and shifts sideways. It then turns 90° in the opposite direction and passes the obstacle. If there is insufficient room, the controller can retrace a verified recent approach and rescan.
 5. Behind the obstacle, the car turns 90° toward the original line. When encoder progress reaches the expected vicinity, two distinct IR hits confirm black tape. The car centres its axle and turns 90° to the original heading. Fresh line and forward range data allow line following to resume or start a new sweep immediately if there is another obstacle ahead.
 
+A close echo during a straight detour leg stops the wheels and starts another sweep. The car uses the same 90° bypass, then uses encoder progress to resume the interrupted leg. The original track still requires black tape confirmation. The controller can retain two interrupted legs at once. At that limit, another close obstacle stops the car.
+
 STOP, link or motor faults, stale inputs, and a failed or timed-out search stop the detour. After a fault, reposition the car on the line. Reset clears the stopped controller and a separate START begins the next run. The wheel track, servo direction and sensor-to-axle offset require calibration on the car. Left and right encoders use GP2 and GP3 respectively.
 
 ## Full avoidance track test
@@ -61,9 +63,9 @@ To check a narrow target that gives an unconfirmed or oversized width, repeat th
 | Detour phase and side | 0–15, none/left/right | 4 and 2 bits in RAM and the low six bits of the MQTT avoidance byte |
 | Wait or stop cause, phase, and forward range | 16 cause codes, phases 0–15, range 0–4095 | 4, 4 and 12 bits in the extended MQTT avoidance packet |
 | Movement request and reply | 7 planner actions, 5 reply states | 3 bits each in the planner |
-| Travel command distance | 0–440 mm | 9 bits in planner output |
+| Travel command distance and interrupted-leg progress | 0–900 mm | 10 bits in planner output and per stored travel field |
 | Pass distance and axle offset | 0–511 mm | 9 bits each in planner storage |
-| Lateral bypass offset | 0–400 mm | 9 bits in planner storage. Pivots use a fixed 90° turn. |
+| Lateral bypass offset | Initially up to 400 mm, adjusted after an interrupted sideways move | 9 bits in the initial plan and 10 bits in the active and saved legs |
 | Crossing count, reverse authorization and input flags | 0–2 crossing samples, boolean flags | 2-bit count and one bit per flag |
 | Motion queue maneuver argument | Forward 1–2000, 90° 2048–2049, reverse 2050–4049, 45° 4094–4095 | 12-bit argument within a 16-bit command |
 
@@ -214,3 +216,7 @@ The host planner replayed a 64 mm near return, a 78 mm width estimate, a clipped
 ## Corrected width and successive 90° detours
 
 Host tests verified that full and partial sweeps report half the previous width estimate. The planner selected T with equal usable clearances, followed the mirrored left and right 90° routes, centred on black tape, and requested a fresh sweep when another obstacle was directly ahead after returning to the line. The controller test verified dispatch of the existing 90° motor command. Pico W MQTT, stationary bench and self-test images built successfully. Track testing is pending. [Test and build output](logs/2026-11-20_90_degree_detours.txt)
+
+## Obstacle detected during a detour
+
+Host tests interrupted the wheels while passing the first obstacle. The car planned and completed a fresh 90° bypass, then resumed the saved leg with the distance already travelled credited. Other replays covered a blockage that cleared before scanning finished, a new obstacle during sideways travel, and a new obstacle during the return to black tape. The controller dispatcher issued STOP before requesting the second scan and waited for stopped motor feedback. The MQTT, stationary bench and self-test images built successfully. On-car testing is pending. [Test and build output](logs/2026-11-20_nested_detour.txt)

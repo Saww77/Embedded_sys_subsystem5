@@ -29,8 +29,9 @@ static void halt(VC_MODEL *model, const VC_INPUT *in, VC_STATE state, VC_REASON 
 {
     if (vc_core_detouring(model)) {
         S5_PHASE phase = model->avoidance.phase;
-        if (phase == S5_PROFILE_PATH || phase == S5_WAIT_PATH ||
-            ((phase == S5_TURN_OUT || phase == S5_BACK_UP) && in->avoidance.motion == S5_MOTION_NONE)) {
+        if (!model->avoidance.depth &&
+            (phase == S5_PROFILE_PATH || phase == S5_WAIT_PATH ||
+             ((phase == S5_TURN_OUT || phase == S5_BACK_UP) && in->avoidance.motion == S5_MOTION_NONE))) {
             model->avoidance = (S5_AVOID){0};
         } else {
             S5_FAILURE failure = reason == VC_REASON_STOP ? S5_FAIL_STOP :

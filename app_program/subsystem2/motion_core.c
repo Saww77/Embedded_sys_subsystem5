@@ -165,11 +165,12 @@ bool s2_core_set_wheel_rpm(unsigned left,unsigned right)
     state.left_rpm=left; state.right_rpm=right;
     return true;
 }
+/* Wheel circumference in micrometres, with pi rounded to six decimals. */
+#define WHEEL_CIRCUMFERENCE_UM (WHEEL_DIAMETER_MM * UINT32_C(3141593) / 1000u)
+
 static unsigned distance_counts(unsigned mm,unsigned w)
 {
-    /* circumference in micrometres, pi approximated as 3.141593 */
-    uint32_t circumference_um=(uint32_t)((uint64_t)WHEEL_DIAMETER_MM*3141593u/1000u);
-    return (unsigned)(((uint64_t)mm*cpr(w)*100u + circumference_um/2)/circumference_um);
+    return (unsigned)(((uint64_t)mm*cpr(w)*100u + WHEEL_CIRCUMFERENCE_UM/2u)/WHEEL_CIRCUMFERENCE_UM);
 }
 static bool move_mm(unsigned mm,bool reverse)
 {
@@ -216,6 +217,13 @@ bool s2_core_distance_reached(unsigned mm, const S2_STATUS *status)
 {
     return s2_get_bits(status,41,13) >= distance_counts(mm,0) &&
            s2_get_bits(status,54,13) >= distance_counts(mm,1);
+}
+
+unsigned s2_core_distance_travelled_mm(const S2_STATUS *status)
+{
+    unsigned left = (uint64_t)s2_get_bits(status, 41, 13) * WHEEL_CIRCUMFERENCE_UM / (cpr(0) * 100u);
+    unsigned right = (uint64_t)s2_get_bits(status, 54, 13) * WHEEL_CIRCUMFERENCE_UM / (cpr(1) * 100u);
+    return left < right ? left : right;
 }
 
 bool s2_core_maneuver_finished(unsigned arg, const S2_STATUS *status)
