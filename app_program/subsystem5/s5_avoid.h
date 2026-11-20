@@ -48,6 +48,7 @@ typedef struct {
     unsigned phase:4, side:2, line_samples:2, reverse_available:1;
     unsigned reverse_long:1, scan_retried:1, turn_90:1, failure:4, failed_phase:4;
     unsigned offset_mm:9, next_pass_mm:9, passed_mm:9;
+    unsigned blocked_range_mm:12;
 } S5_AVOID;
 typedef struct {
     uint16_t action : 3;

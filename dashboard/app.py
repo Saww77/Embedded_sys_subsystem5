@@ -239,7 +239,7 @@ class Dashboard:
                         hint = "The sweep is saved. The centred sensor is rechecking the space ahead."
                     elif waiting:
                         label = "Waiting to verify a route"
-                        hint = "The car will check again and continue when it has clearance."
+                        hint = "The car will continue when it verifies clearance. If the obstacle is very close, give it more space."
                     else:
                         label = "Automatic avoidance active"
                         hint = "The car will continue the run automatically."

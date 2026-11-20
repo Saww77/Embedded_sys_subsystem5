@@ -11,6 +11,7 @@
 #define MOTION_SETTLE_MS 260u
 #define SCAN_TIMEOUT_MS 14000u
 #define RESCAN_INTERVAL_MS 1000u
+#define RESCAN_RANGE_CHANGE_MM 30u
 #define PHASE_TIMEOUT_MS 6500u
 
 _Static_assert(S5_CLEAR_MM + FOLLOW_AHEAD_MARGIN_MM <= S5_MAX_PASS_MM,
@@ -110,14 +111,17 @@ S5_BYPASS s5_plan_bypass(const S5_PROFILE *profile)
 
         /* Background past an edge can justify a lateral turn. A fresh range in
            the new heading is still required before the wheels drive sideways. */
-        if (profile->front_mm < S5_TURN_CLEARANCE_MM + FRONT_MARGIN_MM) return plan;
-        left_path = profile->left_mm;
-        right_path = profile->right_mm;
+        left_path = s5_range_available(profile->left_mm) ? profile->left_mm : profile->left_path_mm;
+        right_path = s5_range_available(profile->right_mm) ? profile->right_mm : profile->right_path_mm;
         left = !profile->left_clipped && left_offset <= MAX_LATERAL_OFFSET_MM &&
                departure_clear(left_path, left_offset + FRONT_MARGIN_MM);
         right = !profile->right_clipped && right_offset <= MAX_LATERAL_OFFSET_MM &&
                 departure_clear(right_path, right_offset + FRONT_MARGIN_MM);
         if (!left && !right) return plan;
+        if (profile->front_mm < S5_TURN_CLEARANCE_MM + FRONT_MARGIN_MM) {
+            plan.failure = S5_FAIL_ROOM;
+            return plan;
+        }
         plan.turn_90 = true;
     }
 
@@ -132,11 +136,15 @@ S5_BYPASS s5_plan_bypass(const S5_PROFILE *profile)
     return plan;
 }
 
-static S5_AVOID_OUTPUT wait_for_path(S5_AVOID *state, S5_FAILURE reason, uint32_t now)
+static S5_AVOID_OUTPUT wait_for_path(S5_AVOID *state, S5_FAILURE reason, const S5_AVOID_INPUT *in)
 {
     state->failure = reason;
     state->failed_phase = state->phase;
-    return go(state, S5_WAIT_PATH, now);
+    state->blocked_range_mm = S5_UNKNOWN_RANGE;
+    if (in->range_valid &&
+        (reason == S5_FAIL_ROOM || reason == S5_FAIL_SIDE || reason >= S5_FAIL_LEFT_LIMIT))
+        state->blocked_range_mm = in->range_mm;
+    return go(state, S5_WAIT_PATH, in->now);
 }
 
 static void clear_path_failure(S5_AVOID *state)
@@ -162,6 +170,10 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
             clear_path_failure(state);
             return go(state, S5_COMPLETE, in->now);
         }
+        /* An unchanged obstacle gives the same geometry on the next sweep. */
+        unsigned blocked = state->blocked_range_mm;
+        if (s5_range_measured(blocked) && in->range_mm < blocked + RESCAN_RANGE_CHANGE_MM &&
+            blocked < in->range_mm + RESCAN_RANGE_CHANGE_MM) return wait;
         if (elapsed >= RESCAN_INTERVAL_MS) {
             clear_path_failure(state);
             state->scan_retried = true;
@@ -174,7 +186,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
                             !range_fresh ? S5_FAIL_ECHO : S5_FAIL_PHASE_TIMEOUT;
         if (phase == S5_PROFILE_PATH ||
             ((phase == S5_TURN_OUT || phase == S5_BACK_UP) && in->motion == S5_MOTION_NONE))
-            return wait_for_path(state, reason, in->now);
+            return wait_for_path(state, reason, in);
         return fail(state, reason, in->now);
     }
     if (phase == S5_PROFILE_PATH) {
@@ -211,7 +223,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         /* Change vantage point only if the tracked segment permits retracing and
            a clipped target should still be in profiling range after the move. */
         bool retrace_in_range = range_fresh && in->range_mm <= S5_CLEAR_MM - S5_REVERSE_MM;
-        if (state->reverse_available && in->line_centered && !in->line_junction &&
+        if (state->reverse_available && range_fresh && in->line_centered && !in->line_junction &&
             (!clipped || retrace_in_range)) {
             state->reverse_available = false;
             state->reverse_long = state->reverse_long && reason == S5_FAIL_ROOM &&
@@ -219,13 +231,13 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
                                   range_fresh && in->range_mm <= S5_CLEAR_MM - S5_LONG_REVERSE_MM;
             return go(state, S5_BACK_UP, in->now);
         }
-        return wait_for_path(state, range_fresh ? reason : S5_FAIL_ECHO, in->now);
+        return wait_for_path(state, range_fresh ? reason : S5_FAIL_ECHO, in);
     }
 
     if (phase == S5_BACK_UP) {
         if (in->line_junction || !in->line_centered) return fail(state, S5_FAIL_LINE, in->now);
         if (!range_fresh)
-            return in->motion == S5_MOTION_NONE ? wait_for_path(state, S5_FAIL_ECHO, in->now) :
+            return in->motion == S5_MOTION_NONE ? wait_for_path(state, S5_FAIL_ECHO, in) :
                                                   fail(state, S5_FAIL_ECHO, in->now);
         if (in->motion == S5_MOTION_DONE) return go(state, S5_PROFILE_PATH, in->now);
         if (in->motion != S5_MOTION_NONE || !in->stopped || elapsed < MOTION_SETTLE_MS ||
@@ -284,7 +296,7 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         if (phase == S5_TURN_OUT) {
             unsigned turn_room = state->turn_90 ? S5_TURN_CLEARANCE_MM : state->offset_mm;
             if (in->range_mm < turn_room + FRONT_MARGIN_MM)
-                return wait_for_path(state, S5_FAIL_ROOM, in->now);
+                return wait_for_path(state, S5_FAIL_ROOM, in);
         }
         if (in->range_mm < S5_TURN_CLEARANCE_MM) return fail(state, S5_FAIL_CLOSE, in->now);
         bool outward = phase == S5_TURN_OUT || phase == S5_ALIGN_RETRY || phase == S5_ALIGN_LINE;

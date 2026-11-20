@@ -204,6 +204,9 @@ static void test_unsafe_profile_and_scan_timeout(void)
     assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_WAIT_PATH &&
            model.avoidance.failure == S5_FAIL_SIDE && model.state == VC_AVOIDING);
     step(&model, &in, &out, 1000);
+    assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_WAIT_PATH);
+    in.avoidance.range_mm += 30;
+    step(&model, &in, &out, 20);
     assert(out.maneuver.action == S5_WAIT && model.avoidance.phase == S5_PROFILE_PATH);
 
     model = (VC_MODEL){0};
@@ -411,6 +414,46 @@ static void test_departure_room_after_retrace(void)
     assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_TURN_OUT);
 }
 
+static void test_close_left_obstacle_with_right_clearance(bool has_retrace)
+{
+    S5_AVOID state = {.phase = S5_PROFILE_PATH, .phase_at = 100,
+                      .reverse_available = has_retrace, .reverse_long = has_retrace};
+    S5_AVOID_INPUT in = {
+        .now = 500, .profile_at = 490, .range_at = 500, .range_mm = 64,
+        .profile_valid = true, .stopped = true, .range_valid = true, .line_centered = true,
+        .profile = {.nearest_mm = 64, .front_mm = 58, .width_mm = 78, .left_clipped = true,
+                    .left_path_mm = 68, .right_path_mm = 839, .right_mm = S5_UNKNOWN_RANGE},
+    };
+    S5_AVOID_OUTPUT out = s5_avoid_step(&state, &in);
+    assert(out.action == S5_WAIT);
+    if (!has_retrace) {
+        assert(state.phase == S5_WAIT_PATH && state.failure == S5_FAIL_ROOM);
+        in.now = in.range_at = 8000;
+        assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_WAIT_PATH);
+        in.now = in.range_at = 8100;
+        in.range_mm = 124;
+        assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_PROFILE_PATH);
+        return;
+    }
+    assert(state.phase == S5_BACK_UP);
+    in.now = in.range_at = 800;
+    out = s5_avoid_step(&state, &in);
+    assert(out.action == S5_REVERSE && out.distance_mm == 60);
+
+    in.now = in.range_at = 1500;
+    in.motion = S5_MOTION_DONE;
+    in.range_mm = 124;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_PROFILE_PATH);
+    in.now = in.range_at = in.profile_at = 2500;
+    in.motion = S5_MOTION_NONE;
+    in.profile.nearest_mm = 124;
+    in.profile.front_mm = 118;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_TURN_OUT);
+    in.now = in.range_at = 2800;
+    out = s5_avoid_step(&state, &in);
+    assert(out.action == S5_PIVOT_RIGHT && out.turn_90);
+}
+
 static void test_reverse_and_rescan(bool path_clears)
 {
     VC_MODEL model = {0};
@@ -457,6 +500,8 @@ int main(void)
     test_clipped_scan(false);
     test_clipped_scan(true);
     test_departure_room_after_retrace();
+    test_close_left_obstacle_with_right_clearance(true);
+    test_close_left_obstacle_with_right_clearance(false);
     test_reverse_and_rescan(true);
     test_reverse_and_rescan(false);
     puts("PASS automatic detours, width-based offset, lateral route, rescan, line recovery and cancellation");

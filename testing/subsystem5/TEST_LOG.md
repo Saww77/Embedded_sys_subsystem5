@@ -206,3 +206,7 @@ The host dispatcher accepted START both with a close range and with a missing ec
 ## Missing forward echo after a sweep
 
 The host dispatcher replayed a saved sweep with a 196 mm nearest return, 294 mm estimated width and 208/651 mm left/right departure ranges. A missing forward echo held the vehicle stationary with the servo centred. A fresh forward echo resumed planning from the saved sweep and dispatched a right pivot without requesting another sweep. The planner test also verified that an expired sweep stays in the wait phase during continued echo loss. The integrated Pico W MQTT firmware built successfully. On-car testing is pending. [Test and build output](logs/2026-11-20_forward_echo.txt)
+
+## Close obstacle with a clear departure side
+
+The host planner replayed a 64 mm near return, a 78 mm width estimate, a clipped left edge and 68/839 mm left/right departure readings. With a verified straight approach long enough to retrace, it requested a 60 mm reverse. A fresh scan with enough turning room then selected a 90° right pivot. With no approach to retrace, an unchanged forward reading kept the servo centred. A change of at least 30 mm allowed another sweep. The scan, planner, dispatcher and 16 dashboard tests passed. The integrated Pico W MQTT image linked and generated a UF2. Track testing is pending. [Test and build output](logs/2026-11-20_close_obstacle.txt)

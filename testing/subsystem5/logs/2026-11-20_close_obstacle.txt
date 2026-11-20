@@ -1,0 +1,5 @@
+PASS echo capture, scan packing, partial width estimates, sweep limits and bench background replay
+PASS close-left/right-clear recovery, repeat-scan suppression, line recovery and cancellation
+PASS START, STOP, echo recovery and right pivot from a saved sweep without rescanning
+PASS 16 dashboard telemetry tests
+PASS Pico W MQTT build mtk3pico_smp1_usb_cdc_wifi_lwip_mqtt_nos4.uf2 (Arm GNU 15.2.1, Pico SDK 2.3.1)
