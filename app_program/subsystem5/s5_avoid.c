@@ -7,6 +7,7 @@
 #define FOLLOW_AHEAD_MARGIN_MM 130u
 #define RETRY_STEP_MM 60u
 #define MOTION_SETTLE_MS 260u
+#define PIVOT_PROOF_MAX_AGE_MS 1500u
 #define SCAN_TIMEOUT_MS 14000u
 #define RESCAN_INTERVAL_MS 1000u
 #define RESCAN_RANGE_CHANGE_MM 30u
@@ -98,7 +99,12 @@ S5_BYPASS s5_plan_bypass(const S5_PROFILE *profile)
                 left_path >= left_offset + FRONT_MARGIN_MM + S5_MANEUVER_STOP_MM;
     bool right = right_room && s5_range_available(right_path) &&
                  right_path >= right_offset + FRONT_MARGIN_MM + S5_MANEUVER_STOP_MM;
-    if (!left && !right) {
+    /* With a usable width and no verified route, face left to measure
+       that heading directly. A short measured left return rules it out. */
+    bool probe_left = !left && !right && left_room &&
+                      !s5_range_available(left_path) &&
+                      profile->width_mm && profile->width_mm != S5_UNKNOWN_WIDTH;
+    if (!left && !right && !probe_left) {
         if ((left_room && !s5_range_available(left_path)) ||
             (right_room && !s5_range_available(right_path))) plan.failure = S5_FAIL_ECHO;
         else if (profile->left_clipped && profile->right_clipped) plan.failure = S5_FAIL_BOTH_LIMITS;
@@ -108,12 +114,13 @@ S5_BYPASS s5_plan_bypass(const S5_PROFILE *profile)
         return plan;
     }
     /* Verify turning room here and live clearance at 90 degrees before driving sideways. */
-    if (profile->front_mm < S5_TURN_CLEARANCE_MM + FRONT_MARGIN_MM) {
+    if (profile->front_mm < S5_DEPARTURE_CLEARANCE_MM) {
         plan.failure = S5_FAIL_ROOM;
         return plan;
     }
 
-    bool use_left = left && (!right || left_path >= right_path);
+    bool use_left = probe_left || (left && (!right || left_path >= right_path));
+    plan.probe_left = probe_left;
     plan.side = use_left ? S5_LEFT : S5_RIGHT;
     plan.failure = S5_FAIL_NONE;
     plan.offset_mm = use_left ? left_offset : right_offset;
@@ -147,7 +154,7 @@ static S5_AVOID_OUTPUT avoid_on_leg(S5_AVOID *state, const S5_AVOID_INPUT *in)
         .progress_mm = progress, .line_goal_mm = line_goal,
     };
     state->side = S5_NO_SIDE;
-    state->scan_retried = false;
+    state->scan_retried = state->probe_left = false;
     state->reverse_available = travelled >= S5_REVERSE_MM;
     state->reverse_long = travelled >= S5_LONG_REVERSE_MM;
     state->offset_mm = state->next_pass_mm = state->passed_mm = 0;
@@ -178,7 +185,7 @@ static S5_AVOID_OUTPUT resume_leg(S5_AVOID *state, const S5_AVOID_INPUT *in, boo
     state->offset_mm = leg.offset_mm;
     state->next_pass_mm = leg.next_pass_mm;
     state->passed_mm = leg.passed_mm;
-    state->reverse_available = state->reverse_long = state->scan_retried = false;
+    state->reverse_available = state->reverse_long = state->scan_retried = state->probe_left = false;
     S5_PHASE phase = leg.phase;
     if (bypassed && returning_to_line(phase)) {
         /* Resume tape search from the side of the estimated crossing that we reached. */
@@ -255,6 +262,8 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
 
     uint32_t elapsed = in->now - state->phase_at;
     bool range_fresh = in->range_valid && in->now - in->range_at <= S5_RANGE_MAX_AGE_MS;
+    bool proof_fresh = in->profile_valid && in->profile.pivot_confirmed &&
+                       in->now - in->profile_at <= PIVOT_PROOF_MAX_AGE_MS;
     if (in->motion == S5_MOTION_FAILED) return fail(state, S5_FAIL_MOTION, in->now);
     if (phase == S5_WAIT_PATH) {
         /* The scan task keeps ranging at 90 degrees while stopped. A new
@@ -290,11 +299,6 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         /* The scan belongs to this stop and has completed with the servo centred. */
         if (!in->profile_valid || in->profile_at == state->phase_at ||
             !at_or_after(in->profile_at, state->phase_at) || !in->stopped) return wait;
-        /* Keep a completed obstacle profile while centered pings recover.
-           Side clearance and the sweep's nearest hit do not measure the
-           space in front of the chassis at departure time. */
-        bool has_result = s5_range_available(in->profile.nearest_mm);
-        if (has_result && !range_fresh) return wait;
         if (range_fresh && in->range_mm > S5_CLEAR_MM) {
             clear_path_failure(state);
             return state->depth ? resume_leg(state, in, false) : go(state, S5_COMPLETE, in->now);
@@ -302,9 +306,12 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         S5_PROFILE profile = in->profile;
         if (range_fresh && in->range_mm < profile.front_mm) profile.front_mm = in->range_mm;
         S5_BYPASS plan = s5_plan_bypass(&profile);
+        if (s5_range_available(profile.nearest_mm) && !range_fresh &&
+            !(plan.probe_left && proof_fresh)) return wait;
         if (plan.side != S5_NO_SIDE) {
             clear_path_failure(state);
             state->side = plan.side;
+            state->probe_left = plan.probe_left;
             state->offset_mm = plan.offset_mm;
             state->next_pass_mm = plan.pass_mm;
             return go(state, S5_TURN_OUT, in->now);
@@ -365,7 +372,8 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
     bool moving = in->motion == S5_MOTION_QUEUED || in->motion == S5_MOTION_PENDING;
     if (moving && forward && range_fresh && in->range_mm <= S5_SCAN_STOP_MM)
         return avoid_on_leg(state, in);
-    if (moving && (!range_fresh || in->range_mm < S5_TURN_CLEARANCE_MM))
+    bool probing = phase == S5_TURN_OUT && state->probe_left;
+    if (moving && (range_fresh ? in->range_mm < S5_TURN_CLEARANCE_MM : !probing))
         return fail(state, range_fresh ? S5_FAIL_CLOSE : S5_FAIL_ECHO, in->now);
 
     if (!state->depth && phase == S5_FIND_LINE &&
@@ -401,12 +409,13 @@ S5_AVOID_OUTPUT s5_avoid_step(S5_AVOID *state, const S5_AVOID_INPUT *in)
         }
     }
 
-    if (!in->stopped || elapsed < MOTION_SETTLE_MS ||
-        !range_fresh || !at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS)) return wait;
+    if (!in->stopped || elapsed < MOTION_SETTLE_MS) return wait;
+    if (range_fresh ? !at_or_after(in->range_at, state->phase_at + MOTION_SETTLE_MS) :
+                      !(probing && proof_fresh)) return wait;
     if (!forward) {
-        if (phase == S5_TURN_OUT && in->range_mm < S5_TURN_CLEARANCE_MM + FRONT_MARGIN_MM)
+        if (range_fresh && phase == S5_TURN_OUT && in->range_mm < S5_DEPARTURE_CLEARANCE_MM)
             return wait_for_path(state, S5_FAIL_ROOM, in);
-        if (in->range_mm < S5_TURN_CLEARANCE_MM) return fail(state, S5_FAIL_CLOSE, in->now);
+        if (range_fresh && in->range_mm < S5_TURN_CLEARANCE_MM) return fail(state, S5_FAIL_CLOSE, in->now);
         bool outward = phase == S5_TURN_OUT || phase == S5_ALIGN_RETRY || phase == S5_ALIGN_LINE;
         if (phase == S5_ALIGN_LINE && state->depth && passed_parent_line(state)) outward = false;
         bool left = outward ? state->side == S5_LEFT : state->side == S5_RIGHT;

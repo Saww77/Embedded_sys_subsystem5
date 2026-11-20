@@ -13,6 +13,7 @@
 #define S5_CLEARANCE_BEARING_DEG 45u
 #define S5_LATERAL_TURN_DEG 90u
 #define S5_TURN_CLEARANCE_MM 100u
+#define S5_DEPARTURE_CLEARANCE_MM (S5_TURN_CLEARANCE_MM + 15u)
 #define S5_REVERSE_MM 30u
 #define S5_LONG_REVERSE_MM 60u
 #define S5_SEARCH_MARGIN_MM 40u
@@ -55,7 +56,7 @@ typedef struct {
     uint32_t phase_at, last_line_at;
     S5_INTERRUPTED_LEG interrupted[S5_NESTED_LIMIT];
     unsigned phase:4, side:2, line_samples:2, reverse_available:1;
-    unsigned reverse_long:1, scan_retried:1, failure:4, failed_phase:4;
+    unsigned reverse_long:1, scan_retried:1, probe_left:1, failure:4, failed_phase:4;
     unsigned offset_mm:10, next_pass_mm:9, passed_mm:10, depth:2;
     unsigned leg_progress_mm:10, issued_mm:10;
     unsigned blocked_range_mm:12;
@@ -66,7 +67,7 @@ typedef struct {
 } S5_AVOID_OUTPUT;
 
 typedef struct {
-    unsigned side:2, failure:4;
+    unsigned side:2, failure:4, probe_left:1;
     unsigned offset_mm:9, pass_mm:9;
 } S5_BYPASS;
 

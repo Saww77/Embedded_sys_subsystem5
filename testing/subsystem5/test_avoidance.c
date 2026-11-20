@@ -295,6 +295,57 @@ static void test_bypass_with_estimated_edges(void)
     assert(plan.side == S5_NO_SIDE && plan.failure == S5_FAIL_BOTH_LIMITS);
 }
 
+static void test_default_left_with_unconfirmed_clearance(void)
+{
+    S5_PROFILE scan = {
+        .nearest_mm = 202, .front_mm = 190, .width_mm = 145, .angle_offset_deg = 65,
+        .left_mm = S5_UNKNOWN_RANGE, .right_mm = S5_UNKNOWN_RANGE,
+        .left_path_mm = S5_UNKNOWN_RANGE, .right_path_mm = 207,
+        .left_edge_mm = -90,
+    };
+    S5_BYPASS plan = s5_plan_bypass(&scan);
+    assert(plan.side == S5_LEFT && plan.probe_left && plan.offset_mm == 305);
+
+    S5_AVOID state = {.phase = S5_PROFILE_PATH, .phase_at = 100};
+    S5_AVOID_INPUT in = {.profile = scan, .now = 500, .profile_at = 490, .stopped = true,
+                         .profile_valid = true, .range_mm = S5_UNKNOWN_RANGE};
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_PROFILE_PATH);
+    in.profile.pivot_confirmed = true;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_TURN_OUT);
+    S5_AVOID expired = state;
+    in.now = 2200;
+    assert(s5_avoid_step(&expired, &in).action == S5_WAIT);
+    in.now = 760;
+    assert(s5_avoid_step(&state, &in).action == S5_PIVOT_LEFT);
+    in.motion = S5_MOTION_PENDING;
+    in.now = 900;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_TURN_OUT);
+
+    S5_AVOID danger = state;
+    S5_AVOID_INPUT close = in;
+    close.range_valid = true;
+    close.range_at = close.now;
+    close.range_mm = S5_TURN_CLEARANCE_MM - 1u;
+    assert(s5_avoid_step(&danger, &close).action == S5_STOP && danger.phase == S5_FAILED);
+
+    in.motion = S5_MOTION_DONE;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT && state.phase == S5_SHIFT_OUT);
+    in.now = 1160;
+    in.motion = S5_MOTION_NONE;
+    assert(s5_avoid_step(&state, &in).action == S5_WAIT);
+    in.range_valid = true;
+    in.range_mm = 860;
+    in.range_at = in.now;
+    S5_AVOID_OUTPUT move = s5_avoid_step(&state, &in);
+    assert(move.action == S5_ADVANCE && move.distance_mm == 305);
+
+    scan.left_path_mm = 80;
+    assert(s5_plan_bypass(&scan).side == S5_NO_SIDE);
+    scan.left_path_mm = S5_UNKNOWN_RANGE;
+    scan.front_mm = S5_DEPARTURE_CLEARANCE_MM - 1u;
+    assert(s5_plan_bypass(&scan).failure == S5_FAIL_ROOM);
+}
+
 static void test_lateral_bypass_at_start(void)
 {
     /* Reproduce the sweep with short 45-degree readings and usable space at R. */
@@ -352,6 +403,7 @@ static void test_stationary_retry(void)
     VC_OUTPUT out;
     S5_PROFILE scan = obstacle(true);
     scan.left_path_mm = scan.right_path_mm = S5_UNKNOWN_RANGE;
+    scan.width_mm = S5_UNKNOWN_WIDTH;
     profile(&model, &in, &out, scan);
     assert(out.maneuver.action == S5_RESCAN && model.avoidance.phase == S5_PROFILE_PATH);
     step(&model, &in, &out, 20);
@@ -634,6 +686,7 @@ int main(void)
     test_reentry_limit();
     test_width_and_side_clearance();
     test_bypass_with_estimated_edges();
+    test_default_left_with_unconfirmed_clearance();
     test_lateral_bypass_at_start();
     test_stationary_retry();
     test_clipped_scan(false);
@@ -647,5 +700,5 @@ int main(void)
     test_next_obstacle_on_return();
     test_reverse_and_rescan(true);
     test_reverse_and_rescan(false);
-    puts("PASS 90-degree detours, nested bypass, interrupted leg, tape recovery and cancellation");
+    puts("PASS default left pivot, post-turn range, nested bypass, line recovery and cancellation");
 }

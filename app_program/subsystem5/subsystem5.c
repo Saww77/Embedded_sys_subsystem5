@@ -139,15 +139,33 @@ static unsigned scan_edge(S5_SCAN *samples, unsigned anchor, unsigned reference,
 
 /* The last sweep bearing can be far from centre. Give the forward reading
    several chances after settling, and feed each ping through the range gate. */
-static void refresh_forward(uint32_t request)
+static bool refresh_forward(uint32_t request)
 {
+    bool open_last = false;
     for (unsigned attempt = 0; attempt < 3u; ++attempt) {
-        if (!vehicle_obstacle_scan_current(request)) return;
+        if (!vehicle_obstacle_scan_current(request)) return false;
         unsigned range = s5_hw_ping().range_mm;
         vehicle_submit_obstacle_range(range);
-        if (s5_range_measured(range)) return;
+        if (s5_range_measured(range) || (open_last && range == S5_OPEN_RANGE)) return true;
+        open_last = range == S5_OPEN_RANGE;
         if (attempt + 1u < 3u) tk_dly_tsk(PING_INTERVAL_MS);
     }
+    return false;
+}
+
+static void confirm_pivot(S5_PROFILE *profile, uint32_t request)
+{
+    const unsigned angle = s5_servo_angle(profile->angle_offset_deg);
+    if (angle + 15u < S5_CENTRE_ANGLE || angle > S5_CENTRE_ANGLE + 15u ||
+        !vehicle_obstacle_scan_current(request)) return;
+
+    unsigned range = read_at((S5_SCAN_MAX_ANGLE - angle) / S5_FINE_STEP, FALSE, true, S5_UNKNOWN_RANGE);
+    aim(S5_CENTRE_ANGLE);
+    /* Use a conservative forward projection for bearings within 15 degrees. */
+    profile->pivot_confirmed = s5_same_obstacle(range, profile->nearest_mm) &&
+                               range * 9u / 10u >= S5_DEPARTURE_CLEARANCE_MM;
+    if (profile->pivot_confirmed)
+        tm_printf((UB*)"[S5] near-forward return verified at %u deg for the left pivot\n", angle);
 }
 
 static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *request)
@@ -201,7 +219,8 @@ static BOOL scan_obstacle(S5_PROFILE *profile, BOOL verbose, const uint32_t *req
     profile->right_path_mm = read_at(S5_CENTRE_INDEX + BYPASS_SCAN_STEPS, verbose, true, S5_UNKNOWN_RANGE);
     if (request && !vehicle_obstacle_scan_current(*request)) goto cancelled;
     aim(S5_CENTRE_ANGLE);
-    if (request) refresh_forward(*request);
+    if (request && !refresh_forward(*request) && s5_plan_bypass(profile).probe_left)
+        confirm_pivot(profile, *request);
     tm_printf((UB*)"%s paths T(left %u deg)=%u mm R(right %u deg)=%u mm (4094=open, 4095=unavailable)\n",
               tag, S5_CENTRE_ANGLE + S5_CLEARANCE_BEARING_DEG, (unsigned)profile->left_path_mm,
               S5_CENTRE_ANGLE - S5_CLEARANCE_BEARING_DEG, (unsigned)profile->right_path_mm);

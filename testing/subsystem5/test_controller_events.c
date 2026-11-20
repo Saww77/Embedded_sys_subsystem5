@@ -6,7 +6,7 @@
 static uint32_t clock_ms;
 static unsigned event_flags, stop_count, command_count, scan_count, clear_count, reset_count;
 static bool reset_result;
-static unsigned right_turn_count;
+static unsigned right_turn_count, left_turn_count;
 static unsigned connection = 7;
 static bool motor_busy;
 static S2_STATUS motor;
@@ -73,8 +73,8 @@ bool motion_maneuver(unsigned mm, bool right, uint16_t *command)
 {
     assert(!queued_command);
     if (!mm) {
-        assert(right);
-        ++right_turn_count;
+        if (right) ++right_turn_count;
+        else ++left_turn_count;
     }
     *command = queued_command = (uint16_t)(1u + (mm << 4));
     motor_busy = true;
@@ -297,5 +297,26 @@ int main(void)
     motor_stopped();
     assert(work() > 0 && scan_count == scans_before + 1 && vehicle_obstacle_scan_request(&request));
     assert(vehicle_get_snapshot(&snapshot) && snapshot.state == VC_AVOIDING);
-    puts("PASS START, saved sweep, echo recovery, and stop-before-scan on a new detour obstacle");
+    S5_PROFILE default_left = {.nearest_mm = 202, .front_mm = 190, .width_mm = 145, .angle_offset_deg = 65,
+                               .left_mm = S5_UNKNOWN_RANGE, .right_mm = S5_UNKNOWN_RANGE,
+                               .left_path_mm = S5_UNKNOWN_RANGE, .right_path_mm = 207,
+                               .left_edge_mm = -90, .pivot_confirmed = true};
+    clock_ms += 20;
+    vehicle_submit_obstacle_range(S5_UNKNOWN_RANGE);
+    vehicle_finish_obstacle_scan(&default_left, request);
+    assert(work() > 0 && model.avoidance.phase == S5_TURN_OUT);
+    assert(vehicle_get_snapshot(&snapshot) && snapshot.avoidance_side == S5_LEFT && !left_turn_count);
+    clock_ms += 260;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    assert(work() > 0 && left_turn_count == 1 && scan_count == scans_before + 1);
+    motor_acknowledge(S2_REPLY_OK);
+    work();
+    motor_stopped();
+    work();
+    clock_ms += 260;
+    vehicle_submit_line(108, 0, 26, 30, 30, FALSE, 0);
+    assert(work() > 0 && model.avoidance.phase == S5_SHIFT_OUT && !queued_command);
+    vehicle_submit_obstacle_range(860);
+    assert(work() > 0 && (queued_command >> 4) == 305);
+    puts("PASS stop-before-scan, default left pivot and advance only after fresh post-turn range");
 }
